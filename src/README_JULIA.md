@@ -20,7 +20,7 @@ This directory contains a complete Julia translation of the geodesic Levenberg-M
 
 ### New Julia Files
 - **GeodesicLM.jl** - Module wrapper (main entry point)
-- **geodesiclm.jl** - Main optimization algorithm
+- **geodesiclm_alg.jl** - Main optimization algorithm
 - **accept.jl** - Acceptance criterion
 - **converge.jl** - Convergence checking
 - **destsv.jl** - Singular value estimation

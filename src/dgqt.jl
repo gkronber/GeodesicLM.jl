@@ -123,6 +123,9 @@ function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float
         
         # Attempt the Cholesky factorization of A without referencing
         # the lower triangular part.
+        # (hoist these because `try` introduces a new scope)
+        indef = 1
+        L = nothing
         try
             L = cholesky(Hermitian(A, :U))
             indef = 0

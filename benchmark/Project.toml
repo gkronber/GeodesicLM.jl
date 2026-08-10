@@ -1,0 +1,20 @@
+# -*- julia -*-
+# benchmark/Project.toml
+# Benchmark environment for GeodesicLM.jl benchmarks.
+#
+# This environment is used by AirspeedVelocity (`benchpkg`) to run the
+# benchmark suite in `benchark/benchmarks.jl` and to compare timing across
+# git revisions of GeodesicLM.jl.
+#
+# `GeodesicLM` is listed so the runner resolves it; when benchmarking the
+# current state (`dirty` revision) AirspeedVelocity develops the local check
+# out into this environment automatically.
+
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+GeodesicLM = "ef14dfaf-8eb7-4021-bbb1-710ada96a62d"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+
+[compat]
+BenchmarkTools = "1"
+julia = "1.12"

@@ -46,7 +46,7 @@ All Fortran files in the geodesicLM folder have been successfully converted to J
    - Rank-deficient Broyden update of the Jacobian matrix
    - Two-stage update formula with first and second order terms
 
-10. **geodesiclm.jl** - `geodesiclm()` function (main routine)
+10. **geodesiclm_alg.jl** - `geodesiclm()` function (main routine)
     - Complete Geodesic Levenberg-Marquardt optimization algorithm
     - Integrates all subroutines with full convergence checking
     - Uses Julia's LinearAlgebra for all BLAS/LAPACK operations
@@ -93,7 +93,7 @@ include("fdavv.jl")
 include("fdjac.jl")
 include("lambda.jl")
 include("updatejac.jl")
-include("geodesiclm.jl")
+include("geodesiclm_alg.jl")
 ```
 
 Or create a module file:
@@ -113,7 +113,7 @@ include("fdavv.jl")
 include("fdjac.jl")
 include("lambda.jl")
 include("updatejac.jl")
-include("geodesiclm.jl")
+include("geodesiclm_alg.jl")
 
 export geodesiclm, acceptance, convergence_check, destsv, dgqt, dpmpar,
        fd_avv, fdjac, trust_region, update_lam_factor, update_lam_nelson,

@@ -11,7 +11,7 @@ include("GeodesicLM.jl")
 using .GeodesicLM
 
 # Or load individual components:
-include("geodesiclm.jl")
+include("geodesiclm_alg.jl")
 include("accept.jl")
 # ... etc
 ```
@@ -191,7 +191,7 @@ end
 ```
 src/
 ├── GeodesicLM.jl          # Main module file
-├── geodesiclm.jl          # Main algorithm
+├── geodesiclm_alg.jl      # Main algorithm
 ├── accept.jl              # Acceptance criterion
 ├── converge.jl            # Convergence checking
 ├── destsv.jl              # Singular value estimation

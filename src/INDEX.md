@@ -8,7 +8,7 @@
    - Main entry point for importing all functions
    - Use: `include("GeodesicLM.jl"); using .GeodesicLM`
 
-2. **geodesiclm.jl** - Main algorithm (20K)
+2. **geodesiclm_alg.jl** - Main algorithm (20K)
    - Core Geodesic Levenberg-Marquardt optimizer
    - Function: `geodesiclm(...)`
 
@@ -103,7 +103,7 @@ result = geodesiclm(func, jac, Avv; x=x, fvec=fvec, n=n, m=m)
 ### Option 2: Load Individual Files
 
 ```julia
-include("geodesiclm.jl")
+include("geodesiclm_alg.jl")
 include("accept.jl")
 # ... include other needed files
 
@@ -140,7 +140,7 @@ For best understanding, read in this order:
 ## 🔍 Function Lookup
 
 ### Main Optimizer
-- `geodesiclm()` - geodesiclm.jl
+- `geodesiclm()` - geodesiclm_alg.jl
 
 ### Utility Functions
 - `acceptance()` - accept.jl

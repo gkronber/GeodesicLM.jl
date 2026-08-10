@@ -47,7 +47,10 @@ criterion, and Broyden Jacobian updates.
  - `fvec`: Output array for function values at final solution
  - `n`: Number of parameters
  - `m`: Number of functions
- - `callback`: User-supplied callback function called after each iteration
+ - `callback`: User-supplied callback function called after each iteration.
+   The callback receives `(x, v, a, fvec, fjac, acc, lam, dtd, fvec_new, accepted, info)`
+   and may return a new (nonzero) `info` value to request early termination
+   (returning `nothing` leaves `info` unchanged).
  - `info`: User-provided control flag (set to non-zero to terminate)
  - `analytic_jac`: Whether to use analytical Jacobian
  - `analytic_Avv`: Whether to use analytical second derivatives
@@ -106,6 +109,10 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
     cos_alpha = 1.0
     av = 0.0
     
+    # Keep references to the caller's arrays so we can write results back
+    x_in = x
+    fvec_in = fvec
+    
     fvec_new = zeros(Float64, m)
     fvec_best = copy(fvec)
     x_new = copy(x)
@@ -121,6 +128,7 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
     actred = 0.0
     rho = 0.0
     a_param = 0.5
+    Cnew = 0.0
     
     # Convergence status strings
     converged_info = Dict(
@@ -188,6 +196,7 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
     x_best = copy(x)
     
     # Compute initial Jacobian
+    fjac = zeros(Float64, m, n)
     if analytic_jac && jacobian !== nothing
         jacobian(x, fjac)
         njev = njev + 1
@@ -254,10 +263,14 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
     
     # Main optimization loop
     for istep in 1:maxiter
+        niters = istep
         
         info = 0
         if callback !== nothing
-            callback(x, v, a, fvec, fjac, acc, lam, dtd, fvec_new, accepted, info)
+            ret = callback(x, v, a, fvec, fjac, acc, lam, dtd, fvec_new, accepted, info)
+            if ret !== nothing
+                info = ret
+            end
         end
         
         if info != 0
@@ -351,6 +364,8 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
             g = jtj + lam * dtd
             
             # Cholesky decomposition
+            # (L must be declared here because `try` introduces a new scope)
+            L = nothing
             try
                 L = cholesky(Hermitian(g, :U))
                 info = 0
@@ -359,16 +374,10 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
             end
             
             if info == 0
-                # If matrix decomposition successful:
+                # If matrix decomposition successful, solve the normal equations
+                # (J'J + lam*dtd)*v = -J'*f
                 v = -1.0 * (fvec' * fjac)[:]
-                ldiv!(L.U, v)  # Solve for v
-                v = -v  # Change sign because we solved U'*U*x = -J'*f
-                
-                # This is not quite right; let me recompute correctly
-                # v = -J'*f, and we solve (J'*J + lambda*dtd)*v = -J'*f
-                v = -1.0 * (fvec' * fjac)[:]
-                sol = L \ v  # Cholesky solve
-                v = sol[:]
+                v = L \ v
                 
                 # Calculate the predicted reduction and directional derivative
                 temp1 = 0.5 * dot(v, jtj * v) / C
@@ -401,8 +410,7 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
                     # Check acceleration for NaNs
                     if !any(isnan.(acc))
                         a = -1.0 * (acc' * fjac)[:]
-                        sol = L \ a  # Solve for a
-                        a = sol[:]
+                        a = L \ a
                     else
                         a .= 0.0  # If NaNs in acc, ignore acceleration term
                     end
@@ -508,19 +516,17 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
         converged = -1
     end
     
-    niters = istep
-    
-    # Return best fit found
-    x = copy(x_best)
-    fvec = copy(fvec_best)
+    # Return best fit found (also write it back into the caller's arrays)
+    x_in .= x_best
+    fvec_in .= fvec_best
     
     if print_level >= 1
         println(print_unit, "Optimization finished")
         println(print_unit, "Results:")
         println(print_unit, "  Converged:    ", get(converged_info, converged, "Unknown"), " (", converged, ")")
-        println(print_unit, "  Final Cost:   ", 0.5 * dot(fvec, fvec))
+        println(print_unit, "  Final Cost:   ", 0.5 * dot(fvec_best, fvec_best))
         if m > n
-            println(print_unit, "  Cost/DOF:     ", 0.5 * dot(fvec, fvec) / (m - n))
+            println(print_unit, "  Cost/DOF:     ", 0.5 * dot(fvec_best, fvec_best) / (m - n))
         end
         println(print_unit, "  niters:       ", niters)
         println(print_unit, "  nfev:         ", nfev)
@@ -529,5 +535,5 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
         flush(print_unit)
     end
     
-    return (x, fvec, niters, nfev, njev, naev, converged)
+    return (x_in, fvec_in, niters, nfev, njev, naev, converged)
 end

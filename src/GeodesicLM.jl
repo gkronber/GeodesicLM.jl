@@ -15,7 +15,7 @@ include("fdavv.jl")
 include("fdjac.jl")
 include("lambda.jl")
 include("updatejac.jl")
-include("geodesiclm.jl")
+include("geodesiclm_alg.jl")
 
 # Export the main API
 export geodesiclm

@@ -25,7 +25,7 @@ norm(y)/norm(z) in the Euclidean norm.
 # Returns
 - `(svmin, z)`: tuple with estimated smallest singular value and associated singular vector
 """
-function destsv(n::Int, R::Matrix{Float64})
+function destsv(n::Int, R::AbstractMatrix{Float64})
     
     const_p01 = 1.0e-2
     const_one = 1.0
@@ -45,7 +45,9 @@ function destsv(n::Int, R::Matrix{Float64})
     
     # Solve R'*y = e.
     for i in 1:n
-        e = sign(e) * (-z[i])
+        # Fortran SIGN(e,-z(i)) returns |e| with the sign of -z(i); copysign
+        # reproduces this (in particular handling negative zero correctly).
+        e = copysign(abs(e), -z[i])
         
         # Scale y. The factor of 0.01 reduces the number of scalings.
         if abs(e - z[i]) > abs(R[i, i])

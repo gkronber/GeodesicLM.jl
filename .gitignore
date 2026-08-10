@@ -1,1 +1,3 @@
 /Manifest*.toml
+benchmark/Manifest.toml
+benchmark/results*.json

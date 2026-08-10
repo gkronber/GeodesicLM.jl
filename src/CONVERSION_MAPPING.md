@@ -197,7 +197,7 @@ function update_jac!(m::Int, n::Int, fjac::Matrix{Float64}, ...)
 
 ---
 
-### 10. geodesiclm.f90 → geodesiclm.jl
+### 10. geodesiclm.f90 → geodesiclm_alg.jl
 
 **Fortran Subroutine (longest, 666 lines):**
 ```fortran
@@ -231,8 +231,8 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing},
 | DNRM2 | SQRT(DOT_PRODUCT(v,v)) | norm(v) | All |
 | DAXPY | y = y + alpha*x | y = y .+ alpha*x | destsv.jl |
 | DSCAL | x = alpha*x | x = x .* alpha | destsv.jl |
-| DPOTRF | CALL DPOTRF(...) | cholesky() | dgqt.jl, lambda.jl, geodesiclm.jl |
-| DPOTRS | CALL DPOTRS(...) | ldiv!(L, x) | dgqt.jl, lambda.jl, geodesiclm.jl |
+| DPOTRF | CALL DPOTRF(...) | cholesky() | dgqt.jl, lambda.jl, geodesiclm_alg.jl |
+| DPOTRS | CALL DPOTRS(...) | ldiv!(L, x) | dgqt.jl, lambda.jl, geodesiclm_alg.jl |
 | DTRSV | CALL DTRSV(...) | x = U\x | dgqt.jl |
 | DCOPY | x = y | x = copy(y) | dgqt.jl |
 
