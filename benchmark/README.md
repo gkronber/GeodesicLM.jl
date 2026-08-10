@@ -33,41 +33,53 @@ You need to build AirspeedVelocity.
 ```bash
 julia -e 'using Pkg; Pkg.activate(temp=true); Pkg.add("AirspeedVelocity"); Pkg.build("AirspeedVelocity")'
 ```
-This places binaries like `benchpkg` into ~/.julia/bin
+This places binaries like `benchpkg` (and `benchpkgtable`) into ~/.julia/bin
 
-### Benchmark the current (dirty) state
+### Run the benchmarks
 
-```bash
-benchpkg --path /path/to/GeodesicLM.jl --rev dirty -o ./benchresults \
-         -s /path/to/GeodesicLM.jl/benchmark/benchmarks.jl
-```
-
-This benchmarks the current working tree (including uncommitted changes) and
-writes `results_GeodesicLM@dirty.json` into `./benchresults`.
-
-### Compare revisions
-
-`benchpkg` runs benchmarks at any number of git revisions (tags, branches, or
-commit hashes). For example, to compare the current state against the previous
-commit:
+Just run `benchmark/run_benchmark.sh` with any arguments you would otherwise
+pass to `benchpkg` (they are forwarded unchanged). After benchmarking it
+automatically calls `benchpkgtable` to print **both** the runtime table and the
+memory/allocation table:
 
 ```bash
-benchpkg --path /path/to/GeodesicLM.jl --rev HEAD~1,dirty -o ./benchresults \
-         -s /path/to/GeodesicLM.jl/benchmark/benchmarks.jl
+# current working tree (including uncommitted changes)
+./benchmark/run_benchmark.sh --rev dirty
+
+# compare the previous commit against the current tree
+./benchmark/run_benchmark.sh --rev HEAD~1,dirty
+
+# save the JSON results into a custom directory
+./benchmark/run_benchmark.sh --rev HEAD~1,dirty -o ./benchresults
+
+# tune, and only run the rosenbrock benchmarks
+./benchmark/run_benchmark.sh --rev HEAD~1,dirty --tune -f rosenbrock
 ```
 
-AirspeedVelocity will check out each revision in turn, build the package, run
-the frozen benchmark script, and print a markdown table with the median timings
-(and a ratio column when exactly two revisions are compared).
+Useful options (identical to `benchpkg`, see `benchpkg --help`):
 
-Other useful flags:
-
-- `--tune` — tune each benchmark with BenchmarkTools before timing.
+- `-r/--rev <rev1,rev2>` — revisions to benchmark (`dirty` = current working
+  tree). The JSON is written as `results_GeodesicLM@<rev>.json` into the output
+  directory, and the printed tables show a ratio column when exactly two
+  revisions are compared.
+- `-o/--output-dir <dir>` — where to save the JSON results (default `.`). The
+  directory is created if needed.
 - `-f case1,case2` — only run the named benchmarks (e.g. `-f rosenbrock`).
-- `--dont-print` — skip printing the summary table.
+- `-s/--script <file>` — the benchmark script (defaults to this suite's
+  `benchmark/benchmarks.jl`).
+- `--tune` — tune each benchmark with BenchmarkTools before timing.
 - `--exeflags "..."` — extra flags passed to the Julia process running the
-  benchmark (e.g. `-O3` for performance, since default is usually `-O2`/release
-  in the runner).
+  benchmark (e.g. `-O3` for performance).
+- `--path <dir>` — path of the package (defaults to this checkout).
+
+`--path`/`--script` are set automatically to this repository, and the two
+result tables (median timings, then allocations/memory) are always printed via
+`benchpkgtable`. Set `BENCHPKG_TABLE_MODE` to `time`, `memory`, or
+`time,memory` to change which tables are printed. For example:
+
+```bash
+BENCHPKG_TABLE_MODE=memory ./benchmark/run_benchmark.sh --rev dirty
+```
 
 See the [AirspeedVelocity README](https://github.com/MilesCranmer/AirspeedVelocity.jl)
 for the full CLI reference and CI integration options.
