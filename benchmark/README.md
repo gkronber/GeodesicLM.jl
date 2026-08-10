@@ -28,6 +28,13 @@ across git revisions, which is useful when improving or extending the code.
 
 ## Running
 
+### Requirements
+You need to build AirspeedVelocity.
+```bash
+julia -e 'using Pkg; Pkg.activate(temp=true); Pkg.add("AirspeedVelocity"); Pkg.build("AirspeedVelocity")'
+```
+This places binaries like `benchpkg` into ~/.julia/bin
+
 ### Benchmark the current (dirty) state
 
 ```bash
@@ -64,32 +71,6 @@ Other useful flags:
 
 See the [AirspeedVelocity README](https://github.com/MilesCranmer/AirspeedVelocity.jl)
 for the full CLI reference and CI integration options.
-
-### Without AirspeedVelocity: local revision comparison
-
-If you do not have `benchpkg` installed, `compare_revisions.jl` provides the same
-revision-vs-revision comparison using plain Julia, `git worktree`, and
-BenchmarkTools (all already available in this environment):
-
-```bash
-julia benchmark/compare_revisions.jl HEAD~1 dirty
-julia benchmark/compare_revisions.jl origin/main HEAD
-```
-
-It benchmarks each listed revision against the suite in
-`benchmark/benchmarks.jl`, prints a markdown-style table of median timings with
-a ratio column (first listed revision is the baseline), and reports memory
-usage. Like `benchpkg`:
-
-- `dirty` benchmarks the current working tree, uncommitted changes included.
-- every other revision is benchmarked from a *temporary* `git worktree`, so
-  your current checkout is never modified.
-- each revision runs in its own Julia subprocess, guaranteeing the matching
-  version of `GeodesicLM` is loaded.
-
-Revisions that predate the benchmark suite (no `benchmark/` directory) or whose
-`Project.toml` can't resolve the local `GeodesicLM` (e.g. before the `[sources]`
-entry was added) are skipped with a warning.
 
 ### Without AirspeedVelocity
 
