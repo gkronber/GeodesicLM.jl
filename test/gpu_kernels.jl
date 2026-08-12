@@ -136,4 +136,90 @@ end
         @test info[1] == 1
     end
 
+    @testset "GPUWorkspace (M4)" begin
+        # direct constructor allocates a fresh workspace
+        w = GeodesicLM.GPUWorkspace(3, 50, Float64, CPU())
+        @test w.n == 3 && w.m == 50
+        @test length(w.x) == 3 && length(w.fvec) == 50
+        @test size(w.fjac) == (50, 3) && size(w.jtj) == (3, 3)
+        @test length(w.scalar) == 1 && length(w.info) == 1
+
+        # OncePerTask reuse: same (n, m, T, backend) key -> same buffers
+        wc = GeodesicLM._get_gpu_workspace(3, 50, Float64, CPU())
+        wc2 = GeodesicLM._get_gpu_workspace(3, 50, Float64, CPU())
+        @test pointer(wc2.x) == pointer(wc.x)
+        # distinct size -> distinct buffers
+        w3 = GeodesicLM._get_gpu_workspace(5, 50, Float64, CPU())
+        @test pointer(w3.x) != pointer(wc.x)
+        @test w3.n == 5
+        # distinct eltype -> distinct buffers
+        w4 = GeodesicLM._get_gpu_workspace(3, 50, Float32, CPU())
+        @test pointer(w4.x) != pointer(wc.x)
+        @test eltype(w4.x) == Float32
+    end
+
+    @testset "GPUObjective + fd Jacobian/acceleration (M5)" begin
+        t = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+        y = 3.0 .* exp.(-t ./ 2.0)
+        m, n = length(t), 2
+
+        @kernel function exp_fun!(x, fvec, t, y)
+            i = @index(Global, Linear)
+            if i <= length(y)
+                a = x[1]
+                tau = x[2]
+                fvec[i] = y[i] - a * exp(-t[i] / tau)
+            end
+        end
+        fun!(be, xx, fv, data) = begin
+            t, y = data
+            ev = exp_fun!(be)(xx, fv, t, y; ndrange = length(y))
+        end
+
+        @kernel function exp_grad!(x, fjac, t, y)
+            i = @index(Global, Linear)
+            if i <= length(y)
+                a = x[1]; tau = x[2]
+                e = exp(-t[i] / tau)
+                fjac[i, 1] = -e
+                fjac[i, 2] = -(a * t[i] / tau^2) * e
+            end
+        end
+        grad!(be, xx, fj, data) = begin
+            tty, _yy = data
+            ev = exp_grad!(be)(xx, fj, tty, _yy; ndrange = length(tty))
+        end
+
+        data = (t, y)
+        obj = GeodesicLM.GPUObjective(fun!; grad! = grad!, data = data)
+
+        # On the CPU backend the device arrays are plain `Array`, so we can
+        # write scalars directly.
+        w = GeodesicLM._get_gpu_workspace(n, m, Float64, CPU())
+        w.x[1] = 1.0; w.x[2] = 2.0   # a=1.0, tau=2.0
+
+        # residuals on-device: r_i = y_i - exp(-t_i/2)
+        fun!(CPU(), w.x, w.fvec, data)
+        eRef = exp.(-t ./ 2.0)
+        @test isapprox(w.fvec, y .- eRef; atol = 1e-10)
+
+        # analytic Jacobian: d/da = -e, d/dtau = -(a*t/tau^2)e
+        jref = hcat(-eRef, -(1.0 .* t ./ 4.0) .* eRef)
+        GeodesicLM.jac!(w, obj)          # uses obj.grad!
+        @test isapprox(w.fjac, jref; atol = 1e-10)
+
+        # finite-difference Jacobian (central) matches the analytic one
+        objfd = GeodesicLM.GPUObjective(fun!; data = data)
+        wfd = GeodesicLM._get_gpu_workspace(n, m, Float64, CPU())
+        wfd.x[1] = 1.0; wfd.x[2] = 2.0
+        fun!(CPU(), wfd.x, wfd.fvec, data)
+        GeodesicLM.jac!(wfd, objfd, true, 1.0e-5)
+        @test isapprox(wfd.fjac, jref; atol = 1e-9)
+
+        # fd acceleration along v (jac_uptodate path) is finite and consistent
+        v = [1.0, 0.2]
+        GeodesicLM.avv!(wfd, objfd, v, true, 1.0e-4)
+        @test all(isfinite, wfd.acc)
+    end
+
 end

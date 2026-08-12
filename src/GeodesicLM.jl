@@ -20,10 +20,15 @@ include("geodesiclm_alg.jl")
 
 # Backend-agnostic GPU kernel building blocks (see PLAN.md / test/gpu_kernels.jl)
 include("gpu/KAOps.jl")
+# M4/M5: device workspace and GPU objective (+ GPU finite differences)
+include("gpu/GPUWorkspace.jl")
+include("gpu/GPUObjective.jl")
 
 # Export the main API
 export geodesiclm
 export GLMWorkspace
+export GPUWorkspace
+export GPUObjective
 export acceptance
 export convergence_check
 export destsv
