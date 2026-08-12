@@ -322,4 +322,7 @@ end
         @test cost(r[2]) < 1.0e-6
     end
 
+    # GPU building-block kernels (CPU backend; no GPU required — see PLAN.md)
+    include("gpu_kernels.jl")
+
 end

@@ -18,6 +18,9 @@ include("updatejac.jl")
 include("workspace.jl")
 include("geodesiclm_alg.jl")
 
+# Backend-agnostic GPU kernel building blocks (see PLAN.md / test/gpu_kernels.jl)
+include("gpu/KAOps.jl")
+
 # Export the main API
 export geodesiclm
 export GLMWorkspace
