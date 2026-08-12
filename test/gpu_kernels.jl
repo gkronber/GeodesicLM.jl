@@ -315,4 +315,110 @@ end
         @test r.dirder < 0
     end
 
+    @testset "full orchestrator matches CPU (M7)" begin
+        # Shared helper: run a GPU (kernel objective) and CPU (plain functions)
+        # realization of the same problem, return both result tuples. The
+        # caller asserts in the testset body (a closure cannot count @test).
+        #
+        # The device path uses different reduction/factorization rounding than
+        # BLAS/LAPACK, so exact iteration/`nfev` parity is NOT asserted; the
+        # guarantee we check is that both reach (essentially) the same optimum
+        # (same `x`, same residuals) and (for well-conditioned problems) the
+        # same small cost.
+        function run_compare(imethod, x0, n, m, gmk, gmj, cpf, cpg; maxiter=500)
+            gobj = GeodesicLM.GPUObjective(gmk; grad! = gmj, data = nothing)
+            xg = collect(x0); fg = zeros(m)
+            rg = geodesiclm(gobj; x=xg, fvec=fg, n=n, m=m, maxiter=maxiter,
+                            imethod=imethod, analytic_Avv=false)
+            xc = collect(x0); fc = zeros(m)
+            rc = geodesiclm(cpf, cpg, nothing; x=xc, fvec=fc, n=n, m=m,
+                            maxiter=maxiter, imethod=imethod, analytic_jac=true,
+                            analytic_Avv=false)
+            return (rd = rg, rc = rc, xg = xg, xc = xc, fg = fg, fc = fc)
+        end
+        function check(r, atol_x = 1e-6, atol_f = 1e-5)
+            @test isapprox(r.xg, r.xc; atol = atol_x)   # same optimum
+            @test isapprox(r.fg, r.fc; atol = atol_f)   # same residuals there
+            # both either converged or both hit the iteration cap
+            @test (r.rd[7] != -1) == (r.rc[7] != -1)
+        end
+
+        # --- quadratic (m == n; linear; exact optimum) ---
+        @kernel function mk_qfun!(x, fv)
+            i = @index(Global, Linear)
+            fv[i] = (i == 1) ? x[1] - 1.0 : x[2] - 2.0
+        end
+        mk_qfun(be, xx, fv, data) = mk_qfun!(be)(xx, fv; ndrange = 2)
+        @kernel function mk_qgrad!(x, fj)
+            fj[1, 1] = 1.0; fj[1, 2] = 0.0; fj[2, 1] = 0.0; fj[2, 2] = 1.0
+        end
+        mk_qgrad(be, xx, fj, data) = mk_qgrad!(be)(xx, fj; ndrange = 2)
+        cp_qfun(x, fv) = (fv[1] = x[1] - 1.0; fv[2] = x[2] - 2.0)
+        cp_qgrad(x, fj) = (fj[1, 1] = 1.0; fj[1, 2] = 0.0; fj[2, 1] = 0.0; fj[2, 2] = 1.0)
+        for im in (0, 1, 2, 10, 11)
+            check(run_compare(im, [0.0, 0.0], 2, 2, mk_qfun, mk_qgrad, cp_qfun,
+                              cp_qgrad; maxiter = 200), 1e-5, 1e-5)
+        end
+
+        # --- rosenbrock ---
+        @kernel function mk_rfun!(x, fv)
+            i = @index(Global, Linear)
+            fv[i] = (i == 1) ? 10.0 * (x[2] - x[1]^2) : 1.0 - x[1]
+        end
+        mk_rfun(be, xx, fv, data) = mk_rfun!(be)(xx, fv; ndrange = 2)
+        @kernel function mk_rgrad!(x, fj)
+            fj[1, 1] = -20 * x[1]; fj[1, 2] = 10.0
+            fj[2, 1] = -1.0; fj[2, 2] = 0.0
+        end
+        mk_rgrad(be, xx, fj, data) = mk_rgrad!(be)(xx, fj; ndrange = 2)
+        cp_rfun(x, fv) = (fv[1] = 10.0 * (x[2] - x[1]^2); fv[2] = 1.0 - x[1])
+        cp_rgrad(x, fj) = (fj[1, 1] = -20 * x[1]; fj[1, 2] = 10.0; fj[2, 1] = -1.0; fj[2, 2] = 0.0)
+        for im in (0, 1)
+            check(run_compare(im, [-1.2, 1.0], 2, 2, mk_rfun, mk_rgrad, cp_rfun,
+                              cp_rgrad), 1e-5, 1e-4)
+        end
+
+        # --- exponential decay (m > n; shallow nonzero optimum) ---
+        t = [0.0, 1.0, 2.0, 4.0, 8.0, 16.0]
+        y = [1.0, 0.5, 0.25, 0.1, 0.05, 0.02]
+        m = length(t)
+        @kernel function mk_efun!(x, fv, t, y)
+            i = @index(Global, Linear)
+            if i <= length(y)
+                fv[i] = y[i] - x[1] * exp(-t[i] / x[2])
+            end
+        end
+        mk_efun(be, xx, fv, data) = begin
+            tt, yy = data
+            mk_efun!(be)(xx, fv, tt, yy; ndrange = length(yy))
+        end
+        @kernel function mk_egrad!(x, fj, t, y)
+            i = @index(Global, Linear)
+            if i <= length(y)
+                e = exp(-t[i] / x[2])
+                fj[i, 1] = -e
+                fj[i, 2] = -(x[1] * t[i] / x[2]^2) * e
+            end
+        end
+        mk_egrad(be, xx, fj, data) = begin
+            tt, yy = data
+            mk_egrad!(be)(xx, fj, tt, yy; ndrange = length(yy))
+        end
+        cp_efun(x, fv) = (for i in eachindex(t); fv[i] = y[i] - x[1] * exp(-t[i] / x[2]); end)
+        cp_egrad(x, fj) = (for i in eachindex(t); e = exp(-t[i] / x[2]); fj[i, 1] = -e; fj[i, 2] = -(x[1] * t[i] / x[2]^2) * e; end)
+        gval = GeodesicLM.GPUObjective(mk_efun; grad! = mk_egrad, data = (t, y))
+        xg = [0.5, 1.0]; fg = zeros(m)
+        rg = geodesiclm(gval; x = xg, fvec = fg, n = 2, m = m, maxiter = 300,
+                        imethod = 0, analytic_Avv = false)
+        xc = [0.5, 1.0]; fc = zeros(m)
+        rc = geodesiclm(cp_efun, cp_egrad, nothing; x = xc, fvec = fc, n = 2, m = m,
+                        maxiter = 300, imethod = 0, analytic_jac = true,
+                        analytic_Avv = false)
+        @test isapprox(xg, xc; atol = 1e-6)
+        @test isapprox(fg, fc; atol = 1e-4)
+        @test isapprox(dot(fg, fg), dot(fc, fc); rtol = 1e-4)
+        # both reach the same shallow optimum (same cost, both plateaued)
+        @test 0.5 * dot(fg, fg) < 5e-3
+    end
+
 end

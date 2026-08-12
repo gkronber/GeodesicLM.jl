@@ -52,6 +52,7 @@ function gpu_step!(w::GPUWorkspace, obj::GPUObjective, lam::T, C::T, Cbest::T,
                    jac_uptodate::Bool = true, h2::T = T(1.0e-5)) where {T}
     be = w.backend
     n, m = w.n, w.m
+    nev = 0   # number of user `fun!` invocations this step (for nfev bookkeeping)
 
     # 1. jtj = J'J ; g = jtj + λ·dtd
     KAOps.AtA!(w.jtj, w.fjac, w.fjac)
@@ -63,7 +64,8 @@ function gpu_step!(w::GPUWorkspace, obj::GPUObjective, lam::T, C::T, Cbest::T,
     if !ok
         return (ok = false, cos_alpha = T(NaN), pred_red = T(NaN),
                 dirder = T(NaN), delta = T(NaN), av = T(NaN), Cnew = T(NaN),
-                rho = T(NaN), accepted = min(prev_accepted - 1, -1))
+                rho = T(NaN), actred = T(NaN), fnew_nan = true,
+                nev = 0, accepted = min(prev_accepted - 1, -1))
     end
 
     # 3. v = g \ (-J' fvec)
@@ -96,6 +98,7 @@ function gpu_step!(w::GPUWorkspace, obj::GPUObjective, lam::T, C::T, Cbest::T,
         obj.avv!(be, w.x, w.v, w.acc, obj.data)
     else
         avv!(w, obj, w.v, jac_uptodate, h2)
+        nev += jac_uptodate ? 1 : 2
     end
     if !KAOps.nanflag(w.acc)
         KAOps.mul!(w.a, adjoint(w.fjac), w.acc)
@@ -116,11 +119,13 @@ function gpu_step!(w::GPUWorkspace, obj::GPUObjective, lam::T, C::T, Cbest::T,
         KAOps.axpy!(w.x_new, T(1), w.v)
         KAOps.axpy!(w.x_new, T(0.5), w.a)
         obj.fun!(be, w.x_new, w.fvec_new, obj.data)
+        nev += 1
         KAOps.norm2(w.scalar, w.fvec_new)
         Cnew = T(0.5) * _hscalar(w.scalar)
         if !KAOps.nanflag(w.fvec_new)
             actred = T(1) - Cnew / C
             rho = pred_red != T(0) ? actred / pred_red : T(0)
+            fnew_nan = false
             # bold criterion: beta = clamp01(1 - cos(v, vold))
             if _dotv(w, w.vold) == T(0)      # vold zero (first step)
                 beta = T(1)
@@ -133,14 +138,14 @@ function gpu_step!(w::GPUWorkspace, obj::GPUObjective, lam::T, C::T, Cbest::T,
             end
             accepted = _accept(C, Cnew, Cbest, ibold, beta)
         else
-            actred = T(0); rho = T(0)
+            actred = T(0); rho = T(0); fnew_nan = true
             accepted = min(prev_accepted - 1, -1)
         end
     else
-        Cnew = T(NaN); rho = T(NaN)
+        Cnew = T(NaN); rho = T(NaN); actred = T(NaN); fnew_nan = true
         accepted = min(prev_accepted - 1, -1)
     end
 
     return (ok = true, cos_alpha, pred_red, dirder, delta, av, Cnew, rho,
-            accepted)
+            actred, fnew_nan, nev, accepted)
 end

@@ -25,6 +25,8 @@ include("gpu/GPUWorkspace.jl")
 include("gpu/GPUObjective.jl")
 # M6: one on-device LM step (jitj/g/cholesky/solves/pred_red/cos_alpha/acc)
 include("gpu/GPUStep.jl")
+# M7: lambda/delta updates, trust region, convergence, full orchestrator
+include("gpu/GPUSolver.jl")
 
 # Export the main API
 export geodesiclm

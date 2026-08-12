@@ -403,4 +403,110 @@ function solve_chol!(x, A, b)
     return x
 end
 
+# Single triangular solves for dgqt/destsv. The symmetric matrix `A` has its
+# Cholesky upper-triangle factor `U` in the upper triangle of `A`.
+#   solve_upper!(x, U, b) : x = U \ b   (upper triangular)
+#   solve_lower!(x, U, b) : x = U' \ b  (lower triangular)
+@kernel function _solve_upper_kernel!(x, U, b, n)
+    i = @index(Global, Linear)
+    if i == 1
+        @inbounds for i in n:-1:1
+            s = b[i]
+            for r in (i + 1):n
+                s -= U[i, r] * x[r]
+            end
+            x[i] = s / U[i, i]
+        end
+    end
+end
+
+@kernel function _solve_lower_kernel!(x, U, b, n)
+    i = @index(Global, Linear)
+    if i == 1
+        @inbounds for i in 1:n
+            s = b[i]
+            for r in 1:(i - 1)
+                s -= U[r, i] * x[r]
+            end
+            x[i] = s / U[i, i]
+        end
+    end
+end
+
+solve_upper!(x, U, b) = begin
+    ev = _solve_upper_kernel!(backend(x))(x, U, b, length(x); ndrange = 1)
+    _sync(ev)
+    x
+end
+
+solve_lower!(x, U, b) = begin
+    ev = _solve_lower_kernel!(backend(x))(x, U, b, length(x); ndrange = 1)
+    _sync(ev)
+    x
+end
+
+# A[i,j] = B[i,j] / s[j]   (scale the columns of B into A)
+@kernel function _scale_cols_kernel!(A, B, s, m, n)
+    idx = @index(Global, Linear)
+    if idx <= m * n
+        i = (idx - 1) % m + 1
+        j = (idx - 1) ÷ m + 1
+        A[i, j] = B[i, j] / s[j]
+    end
+end
+
+scale_cols!(A, B, s) = begin
+    m, n = size(B)
+    ev = _scale_cols_kernel!(backend(A))(A, B, s, m, n; ndrange = m * n)
+    _sync(ev)
+    A
+end
+
+# A[i,j] += s * u[i] * v[j]   (rank-1 update)
+@kernel function _rank1_update_kernel!(A, u, v, m, n, s)
+    idx = @index(Global, Linear)
+    if idx <= m * n
+        i = (idx - 1) % m + 1
+        j = (idx - 1) ÷ m + 1
+        A[i, j] += s * u[i] * v[j]
+    end
+end
+
+rank1_update!(A, u, v, s) = begin
+    m, n = size(A)
+    ev = _rank1_update_kernel!(backend(A))(A, u, v, m, n, s; ndrange = m * n)
+    _sync(ev)
+    A
+end
+
+# dtd[i,i] = max(jtj[i,i], dtd[i,i])
+@kernel function _maxdiag_kernel!(dtd, jtj, n)
+    i = @index(Global, Linear)
+    if i <= n
+        dtd[i, i] = max(jtj[i, i], dtd[i, i])
+    end
+end
+
+maxdiag!(dtd, jtj) = begin
+    n = size(dtd, 1)
+    ev = _maxdiag_kernel!(backend(dtd))(dtd, jtj, n; ndrange = n)
+    _sync(ev)
+    dtd
+end
+
+# A[i,i] = val
+@kernel function _fill_diag_kernel!(A, val, n)
+    i = @index(Global, Linear)
+    if i <= n
+        A[i, i] = val
+    end
+end
+
+fill_diag!(A, val) = begin
+    n = size(A, 1)
+    ev = _fill_diag_kernel!(backend(A))(A, val, n; ndrange = n)
+    _sync(ev)
+    A
+end
+
 end # module KAOps

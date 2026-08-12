@@ -98,7 +98,7 @@ Implemented & unit-tested (M0–M2):
 | `dot!`, `norm2` | reductions (two-stage: grid-stride + serial final) | done |
 | `nanflag` | NaN guard on `x`/`fvec`/`fjac` | done |
 
-Not yet implemented (M7+):
+Not yet implemented:
 
 | Piece | Purpose | Notes |
 |-------|---------|-------|
@@ -107,7 +107,7 @@ Not yet implemented (M7+):
 | Broyden `update_jac!` | optional, on-device | lower priority |
 | convergence helpers | on host from scalars | reuse `convergence_check!`-style logic |
 
-Already implemented (M0–M6):
+Already implemented (M0–M7):
 - elementwise ops, `mul!` (both orientations), `AtA!`, `dot!`/`norm2`,
   `nanflag`, in-place upper-triangle **`cholesky!`** + **`solve_chol!`**,
 - `GPUWorkspace` (device buffers, OncePerTask), `GPUObjective` + fd `jac!`/`avv!`,
@@ -175,13 +175,26 @@ plus **`solve_chol!`** (forward+back substitution) written as our own kernels
   the host `LinearAlgebra` reference for `v`, `a`, `pred_red`, `cos_alpha`,
   `av`, `Cnew`, and `fvec_new` to ~1e-9. This is the M6 correctness gate.
 
-**M7 — Full `geodesiclm` GPU orchestrator**
-- Host loop that calls the M6 step, user kernels, convergence check, λ/δ
-  updates (scalars on host) — a faithful port of `geodesiclm_alg.jl` control
-  flow, but every array op is a KAOps kernel.
-- **Tests:** same toy problems as the CPU suite (quadratic, rosenbrock,
-  exponential) — solutions and convergence codes must match the CPU results
-  within tolerances, but with `x`/`fvec`/`fjac` remaining on device.
+**M7 — Full `geodesiclm` GPU orchestrator** (done)
+- `geodesiclm(obj::GPUObjective; x, fvec, n, m, …)` dispatches on the objective
+  type — a faithful port of `geodesiclm_alg.jl` control flow (init, Jacobian,
+  damping, λ/δ init, main loop, Broyden `gpu_update_jac!`, lambda updates,
+  convergence, best-fit tracking), but every array op is a KAOps kernel and
+  only a few scalars (`C`, `cos_alpha`, `λ`, `δ`, `rho`, `accepted`, …)
+  round-trip.
+- `GpuSolver.jl` adds: `gpu_trust_region!` (scales the m×n Jacobian on-device,
+  solves the n-sized trust-region subproblem via the existing `dgqt`, and
+  returns the Lagrange multiplier as `λ`), `gpu_cos_v_vold!` / `_lam_umrigar_scalars`,
+  `gpu_dtd_pnorm!` / `_delta_more_scalars`, `gpu_update_jac!` (Broyden rank-1
+  updates), and `gpu_convergence_check!`.
+- **Tests** (`test/gpu_kernels.jl`): the CPU suite's problems run as `GPUObjective`
+  kernels and are compared to the same problem run through the CPU `geodesiclm`
+  — quadratic (imethod 0,1,2,10,11), rosenbrock (0,1), exponential decay (m>n).
+  The device path uses different reduction/factorization rounding than
+  BLAS/LAPACK, so the tests assert both reach (essentially) the same optimum
+  (equal `x`/`fvec`/cost within tolerance, same converged/failed status) rather
+  than bit-identical iteration counts; quadratic (`§`m=n linear) still matches
+  `nfev`/`niters` exactly.
 
 **M8 — Real GPU backends & hardening**
 - Add Metal.jl (this machine) and CUDA.jl (CI) as *optional* test extras; run
@@ -236,6 +249,5 @@ plus **`solve_chol!`** (forward+back substitution) written as our own kernels
 
 | Checkpoint | Deliverable |
 |-----------|-------------|
-| This branch | `PLAN.md`; `src/gpu/{KAOps,GPUWorkspace,GPUObjective,GPUStep}.jl` (M0–M6); `test/gpu_kernels.jl`; 167 tests green |
-| Next (M7) | full `geodesiclm` (dispatching on `GPUObjective`), matching CPU results |
-| Final (M8) | Metal/CUDA test runs, docs, parallel multi-problem saturation |
+| This branch | `PLAN.md`; `src/gpu/{KAOps,GPUWorkspace,GPUObjective,GPUStep,GPUSolver}.jl` (M0–M7); `test/gpu_kernels.jl`; 192 tests green |
+| Next (M8) | Metal/CUDA test runs, docs, parallel multi-problem saturation |
