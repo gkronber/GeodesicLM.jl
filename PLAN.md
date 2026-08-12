@@ -1,7 +1,7 @@
 # GPU support for GeodesicLM — implementation plan
 
 **Branch:** `GPU`
-**Status:** foundation (M0–M3) implemented & unit-tested; see `src/gpu/KAOps.jl`
+**Status:** M0–M7 implemented & unit-tested (CPU backend); see `src/gpu/KAOps.jl`
 and `test/gpu_kernels.jl`. This document is the reviewable roadmap for the
 remaining work.
 
