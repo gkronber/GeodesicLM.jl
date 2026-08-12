@@ -23,6 +23,8 @@ include("gpu/KAOps.jl")
 # M4/M5: device workspace and GPU objective (+ GPU finite differences)
 include("gpu/GPUWorkspace.jl")
 include("gpu/GPUObjective.jl")
+# M6: one on-device LM step (jitj/g/cholesky/solves/pred_red/cos_alpha/acc)
+include("gpu/GPUStep.jl")
 
 # Export the main API
 export geodesiclm

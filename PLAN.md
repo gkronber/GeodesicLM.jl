@@ -98,22 +98,20 @@ Implemented & unit-tested (M0–M2):
 | `dot!`, `norm2` | reductions (two-stage: grid-stride + serial final) | done |
 | `nanflag` | NaN guard on `x`/`fvec`/`fjac` | done |
 
-Not yet implemented (M6+):
+Not yet implemented (M7+):
 
-| Kernel | Purpose | Notes |
-|--------|---------|-------|
-| `axpy_mat!` (`g = jtj + λ·dtd`) | — | trivial, an elementwise kernel over n² |
-| compose `x_new = x + v + ½a` | — | compose existing elementwise ops |
+| Piece | Purpose | Notes |
+|-------|---------|-------|
+| `geodesiclm(obj::GPUObjective; …)` orchestration | analog of `geodesiclm_alg.jl` | dispatch on objective type |
+| λ/δ updates on device | only scalars on host | `update_lam*`/`update_*` helpers on host |
+| Broyden `update_jac!` | optional, on-device | lower priority |
+| convergence helpers | on host from scalars | reuse `convergence_check!`-style logic |
 
-Already implemented (M0–M5):
-- elementwise ops, `mul!` (both orientations), `AtA!`, `dot!`/`norm2`, `nanflag`,
-  in-place upper-triangle **`cholesky!`** plus **`solve_chol!`** (own kernels, not
-  vendor LinearAlgebra for GPU arrays — see note below);
-- `GPUWorkspace` (backend-aware device buffers, OncePerTask);
-- `GPUObjective` + finite-difference `jac!`/`avv!`.
-> Note: write our own `cholesky!`/`solve_chol!` kernels even though CUDA.jl and
-> Metal.jl provide some LinearAlgebra methods for `CuArray`/`Mtl.Array`; keeping
-> the linear algebra in KAOps keeps the code backend-agnostic and small.
+Already implemented (M0–M6):
+- elementwise ops, `mul!` (both orientations), `AtA!`, `dot!`/`norm2`,
+  `nanflag`, in-place upper-triangle **`cholesky!`** + **`solve_chol!`**,
+- `GPUWorkspace` (device buffers, OncePerTask), `GPUObjective` + fd `jac!`/`avv!`,
+- `gpu_step!` assembling one on-device LM step.
 `AtA!`, `dot!`/`norm2`, `nanflag`, and an in-place upper-triangle **`cholesky!`**
 plus **`solve_chol!`** (forward+back substitution) written as our own kernels
 (not vendor-specific LinearAlgebra for GPU arrays — see note below).
@@ -165,13 +163,17 @@ plus **`solve_chol!`** (forward+back substitution) written as our own kernels
   finite-difference Jacobians agree on-device; a toy `grad!` (and `avv!`)
   kernel is exercised; fd `jac!`/`avv!` paths checked on the CPU backend.
 
-**M6 — Assemble one LM iteration on-device**
-- Port the step computation using KAOps only: build `jtj`, `g = jtj+λ·dtd`,
-  `cholesky!`, solve for `v`, compute `jv`, `cos_alpha`, `pred_red`, `av`;
-  accept/reject using scalars.
-- **Exploratory test:** reproduce, on the CPU backend, the exact `v`, `av`,
-  `cos_alpha`, `pred_red` of the CPU routine for a fixed snapshot of
-  `(x, fvec, fjac, λ, dtd)`. This is the single most important correctness gate.
+**M6 — Assemble one LM iteration on-device** (done)
+- `gpu_step!(w, obj, lam, C, Cbest, ...)`: KAOps-only port of the iteration
+  interior — `AtA!` for `J'J`, `g = jtj+λ·dtd` (KAOps `axpy!` via linear
+  indexing), KAGPU `cholesky!`, `solve_chol!` for `v` and `a`, `cos_alpha`,
+  `pred_red`/`dirder`, `delta`, `av`, and the new cost/acceptance. Only a
+  handful of scalars round-trip via `_hscalar`; `beta` (bold criterion) and
+  the factor are reduced on-device.
+- **Exploratory test** (see `test/gpu_kernels.jl`): a self-consistent
+  snapshot `(x, fvec=f(x), fjac=J(x), λ, dtd)` on the CPU backend reproduces
+  the host `LinearAlgebra` reference for `v`, `a`, `pred_red`, `cos_alpha`,
+  `av`, `Cnew`, and `fvec_new` to ~1e-9. This is the M6 correctness gate.
 
 **M7 — Full `geodesiclm` GPU orchestrator**
 - Host loop that calls the M6 step, user kernels, convergence check, λ/δ
@@ -234,7 +236,6 @@ plus **`solve_chol!`** (forward+back substitution) written as our own kernels
 
 | Checkpoint | Deliverable |
 |-----------|-------------|
-| This branch | `PLAN.md`; `src/gpu/{KAOps,GPUWorkspace,GPUObjective}.jl` (M0–M5); `test/gpu_kernels.jl`; 157 tests green |
-| Next (M6) | on-device LM step snapshot regression test (single most important gate) |
-| After (M7) | full `geodesiclm` (dispatching on `GPUObjective`), matching CPU results |
+| This branch | `PLAN.md`; `src/gpu/{KAOps,GPUWorkspace,GPUObjective,GPUStep}.jl` (M0–M6); `test/gpu_kernels.jl`; 167 tests green |
+| Next (M7) | full `geodesiclm` (dispatching on `GPUObjective`), matching CPU results |
 | Final (M8) | Metal/CUDA test runs, docs, parallel multi-problem saturation |

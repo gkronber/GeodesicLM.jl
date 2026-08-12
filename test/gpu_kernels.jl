@@ -222,4 +222,97 @@ end
         @test all(isfinite, wfd.acc)
     end
 
+    @testset "on-device LM step vs CPU reference (M6)" begin
+        # Toy residual with analytic grad!/avv!:  r_array[i] = x1^2*t[i] + x2
+        t = [0.2, 0.5, 1.0, 2.0, 4.0]
+        n, m = 2, length(t)
+
+        @kernel function toy_fun!(x, fvec, t)
+            i = @index(Global, Linear)
+            if i <= length(t)
+                fvec[i] = x[1]^2 * t[i] + x[2]
+            end
+        end
+        fun!(be, xx, fv, data) = begin
+            td = data
+            ev = toy_fun!(be)(xx, fv, td; ndrange = length(td))
+        end
+
+        @kernel function toy_grad!(x, fj, t)
+            i = @index(Global, Linear)
+            if i <= length(t)
+                fj[i, 1] = 2 * x[1] * t[i]
+                fj[i, 2] = 1.0
+            end
+        end
+        grad!(be, xx, fj, data) = begin
+            td = data
+            ev = toy_grad!(be)(xx, fj, td; ndrange = length(td))
+        end
+
+        @kernel function toy_avv!(x, v, acc, t)
+            i = @index(Global, Linear)
+            if i <= length(t)
+                acc[i] = 2 * v[1]^2 * t[i]
+            end
+        end
+        avv!(be, xx, vv, acc, data) = begin
+            td = data
+            ev = toy_avv!(be)(xx, vv, acc, td; ndrange = length(td))
+        end
+
+        data = t
+        obj = GeodesicLM.GPUObjective(fun!; grad! = grad!, avv! = avv!, data = data)
+
+        # Build a self-consistent snapshot on-device: x, fvec=f(x), fjac=J(x).
+        ws = GeodesicLM._get_gpu_workspace(n, m, Float64, CPU())
+        ws.x[1] = 1.5; ws.x[2] = -0.5
+        GD = GeodesicLM
+        GD.jac!(ws, obj)                 # fills ws.fjac (J at x)
+        fun!(CPU(), ws.x, ws.fvec, data)
+        lam = 2.0
+        # dtd = diag(1, 2)
+        ws.dtd .= [1.0 0.0; 0.0 2.0]
+        C = 0.5 * dot(ws.fvec, ws.fvec)
+
+        r = GD.gpu_step!(ws, obj, lam, C, C, 0, 1, 10.0, true, 1.0e-5)
+        @test r.ok
+        v = collect(ws.v); a = collect(ws.a)
+
+        # ---- pure-host reference, mirroring gpu_step! line-for-line ----
+        x = [1.5, -0.5]
+        fvec = [x[1]^2 * tt + x[2] for tt in t]
+        J = hcat([2 * x[1] * tt for tt in t], ones(m))
+        dtd = [1.0 0.0; 0.0 2.0]
+        Cref = 0.5 * dot(fvec, fvec)
+        jtj = transpose(J) * J
+        g = jtj + lam * dtd
+        L = cholesky(Hermitian(g, :U))
+        vref = L \ (transpose(J) * (-fvec))
+        tmp1 = jtj * vref; tmp2 = dtd * vref
+        temp1r = 0.5 * dot(vref, tmp1) / Cref
+        temp2r = 0.5 * lam * dot(vref, tmp2) / Cref
+        pred_red_ref = temp1r + 2 * temp2r
+        jv = J * vref
+        cos_ref = abs(dot(fvec, jv)) / (sqrt(dot(fvec, fvec)) * sqrt(dot(jv, jv)))
+        acc = [2 * vref[1]^2 * tt for tt in t]
+        aref = L \ (transpose(J) * (-acc))
+        av_ref = sqrt(dot(aref, dtd * aref) / dot(vref, tmp2))
+        x_new_ref = x + vref + 0.5 * aref
+        fnew_ref = [x_new_ref[1]^2 * tt + x_new_ref[2] for tt in t]
+        Cnew_ref = 0.5 * dot(fnew_ref, fnew_ref)
+
+        @test isapprox(v, vref; atol = 1e-9)
+        @test isapprox(a, aref; atol = 1e-9)
+        @test r.pred_red ≈ pred_red_ref atol = 1e-9
+        @test r.cos_alpha ≈ cos_ref atol = 1e-9
+        @test r.av ≈ av_ref atol = 1e-9
+        @test r.Cnew ≈ Cnew_ref atol = 1e-9
+        # consistent with the new residual evaluated at x_new
+        @test isapprox(ws.fvec_new, fnew_ref; atol = 1e-9)
+        # downhill step is accepted
+        @test r.accepted == 1
+        @test r.dirder < 0
+    end
+
 end
