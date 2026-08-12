@@ -15,10 +15,12 @@ include("fdavv.jl")
 include("fdjac.jl")
 include("lambda.jl")
 include("updatejac.jl")
+include("workspace.jl")
 include("geodesiclm_alg.jl")
 
 # Export the main API
 export geodesiclm
+export GLMWorkspace
 export acceptance
 export convergence_check
 export destsv

@@ -5,6 +5,26 @@
 
 using LinearAlgebra
 
+# Convergence/termination status strings. Hoisted to a module constant so it is
+# allocated once instead of on every `geodesiclm` call.
+const CONVERGED_INFO = Dict(
+    1 => "artol reached",
+    2 => "Cgoal reached",
+    3 => "gtol reached",
+    4 => "xtol reached",
+    5 => "xrtol reached",
+    6 => "ftol reached",
+    7 => "frtol reached",
+    -1 => "maxiter exceeded",
+    -2 => "maxfev exceeded",
+    -3 => "maxjev exceeded",
+    -4 => "maxaev exceeded",
+    -5 => "maxlam exceeded",
+    -6 => "minlam reached",
+    -10 => "User Termination",
+    -11 => "NaN Produced",
+)
+
 """
     geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Union{Function, Nothing};
                x::Vector{Float64}, fvec::Vector{Float64}, n::Int, m::Int,
@@ -20,14 +40,15 @@ using LinearAlgebra
                print_level::Int=0, print_unit::IO=stdout,
                imethod::Int=0, iaccel::Int=1, ibold::Int=1, ibroyden::Int=1,
                initialfactor::Float64=100.0, factoraccept::Float64=2.0,
-               factorreject::Float64=2.0, avmax::Float64=10.0)
+               factorreject::Float64=2.0, avmax::Float64=10.0,
+               ws::Union{Nothing, GLMWorkspace}=nothing)
 
 Minimize the sum of squares of m nonlinear functions of n variables using the 
 Geodesic-Levenberg-Marquardt algorithm with geodesic acceleration, bold acceptance 
 criterion, and Broyden Jacobian updates.
 
- The purpose of geodesiclm is to minimize the sum of the squares of m nonlinear 
- functions of n variables by a modification of the Levenberg-Marquardt algorithm 
+The purpose of geodesiclm is to minimize the sum of the squares of m nonlinear 
+functions of n variables by a modification of the Levenberg-Marquardt algorithm 
  that utilizes the geodesic acceleration step correction, bold acceptance criterion, 
  and a Broyden update of the jacobian matrix. The method employs one of several 
  possible schemes for updating the Levenberg-Marquardt parameter.
@@ -82,6 +103,16 @@ criterion, and Broyden Jacobian updates.
  - `factoraccept`: Factor for lambda/delta on acceptance
  - `factorreject`: Factor for lambda/delta on rejection
  - `avmax`: Maximum allowed acceleration norm
+ - `ws`: Optional `GLMWorkspace` to reuse buffers across calls for inner-loop
+   use. If `nothing` (default), a per-task cached workspace is used (see
+   `GLMWorkspace`), so repeated calls on the same task avoid re-allocating.
+
+# Bytecode / allocations
+
+This implementation reuses a pre-allocated `GLMWorkspace` and performs all
+solves in place, so repeated calls with the same `(n, m)` allocate nothing
+beyond Julia's internal solver scratch (if any). It is therefore suitable for
+calling from a tight inner loop.
 """
 function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Union{Function, Nothing};
                    x::Vector{Float64}, fvec::Vector{Float64}, n::Int, m::Int,
@@ -97,56 +128,47 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
                    print_level::Int=0, print_unit::IO=stdout,
                    imethod::Int=0, iaccel::Int=1, ibold::Int=1, ibroyden::Int=1,
                    initialfactor::Float64=100.0, factoraccept::Float64=2.0,
-                   factorreject::Float64=2.0, avmax::Float64=10.0)
-    
-    # Initialize internal parameters
-    acc = zeros(Float64, m)
-    v = zeros(Float64, n)
-    vold = zeros(Float64, n)
-    a = zeros(Float64, n)
+                   factorreject::Float64=2.0, avmax::Float64=10.0,
+                   ws::Union{Nothing, GLMWorkspace}=nothing)
+
+    # Fetch a reusable workspace (OncePerTask lazy cache) unless the caller
+    # supplied one explicitly.
+    W = ws === nothing ? _get_workspace(n, m) : ws
+    (length(W.v) == n && length(W.acc) == m) ||
+        error("GLMWorkspace sized for (n=$(W.n), m=$(W.m)) does not match (n=$n, m=$m)")
+
+    # Work on workspace buffers; `x`/`fvec` are the caller's arrays (mutated).
+    acc = W.acc
+    v = W.v
+    vold = W.vold
+    a = W.a
+    x_new = W.x_new
+    x_best = W.x_best
+    fvec_new = W.fvec_new
+    fvec_best = W.fvec_best
+    jv = W.jv
+    fjac = W.fjac
+    jtj = W.jtj
+    g = W.g
+    dtdw = W.dtd
+
+    fill!(v, 0.0)
+    fill!(vold, 0.0)
+    fill!(a, 0.0)
     lam = 0.0
     delta = 0.0
     cos_alpha = 1.0
     av = 0.0
-    
-    # Keep references to the caller's arrays so we can write results back
-    x_in = x
-    fvec_in = fvec
-    
-    fvec_new = zeros(Float64, m)
-    fvec_best = copy(fvec)
-    x_new = copy(x)
-    x_best = copy(x)
-    
-    jtj = zeros(Float64, n, n)
-    g = zeros(Float64, n, n)
-    
+    a_param = 0.5
     temp1 = 0.0
     temp2 = 0.0
     pred_red = 0.0
     dirder = 0.0
     actred = 0.0
     rho = 0.0
-    a_param = 0.5
+    C = 0.0
     Cnew = 0.0
-    
-    # Convergence status strings
-    converged_info = Dict(
-        1 => "artol reached",
-        2 => "Cgoal reached",
-        3 => "gtol reached",
-        4 => "xtol reached",
-        5 => "xrtol reached",
-        6 => "ftol reached",
-        7 => "frtol reached",
-        -1 => "maxiters exceeded",
-        -2 => "maxfev exceeded",
-        -3 => "maxjev exceeded",
-        -4 => "maxaev exceeded",
-        -10 => "User Termination",
-        -11 => "NaN Produced"
-    )
-    
+
     if print_level >= 1
         println(print_unit, "Optimizing with Geodesic-Levenberg-Marquardt algorithm, version 1.0.2")
         println(print_unit, "Method Details:")
@@ -156,163 +178,144 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
         println(print_unit, "  Broyden updates: ", ibroyden)
         flush(print_unit)
     end
-    
-    # Initialize variables
+
     niters = 0
     nfev = 0
     naev = 0
     njev = 0
     converged = 0
-    
-    v .= 0.0
-    vold .= 0.0
-    a .= 0.0
-    cos_alpha = 1.0
-    av = 0.0
-    a_param = 0.5
-    
     accepted = 0
     counter = 0
-    
+
     # Evaluate function at initial point
     func(x, fvec)
     nfev = nfev + 1
     C = 0.5 * dot(fvec, fvec)
-    
+
     if print_level >= 1
         println(print_unit, "  Initial Cost:    ", C)
         flush(print_unit)
     end
-    
+
     # Check for NaNs in initial fvec
-    valid_result = !any(isnan.(fvec))
-    if !valid_result
+    if any(isnan, fvec)
         converged = -11
         maxiter = 0
     end
-    
+
     Cbest = C
-    fvec_best = copy(fvec)
-    x_best = copy(x)
-    
+    copyto!(fvec_best, fvec)
+    copyto!(x_best, x)
+
     # Compute initial Jacobian
-    fjac = zeros(Float64, m, n)
     if analytic_jac && jacobian !== nothing
         jacobian(x, fjac)
         njev = njev + 1
     else
-        fjac = fdjac(m, n, x, fvec, func, h1, center_diff)
+        fdjac!(fjac, W, m, n, x, fvec, func, h1, center_diff)
         if center_diff
             nfev = nfev + 2 * n
         else
             nfev = nfev + n
         end
     end
-    
+
     jac_uptodate = true
     jac_force_update = false
-    jtj = fjac' * fjac
-    
-    # Check fjac for NaNs
-    valid_result = !any(isnan.(fjac))
-    if !valid_result
+    mul!(jtj, transpose(fjac), fjac)
+
+    if any(isnan, fjac)
         converged = -11
         maxiter = 0
     end
-    
-    acc .= 0.0
-    a .= 0.0
-    
-    # Initialize damping matrix
+
+    fill!(acc, 0.0)
+    fill!(a, 0.0)
+
+    # Initialize damping matrix (into workspace, reset each call)
     if dtd === nothing
-        dtd = zeros(Float64, n, n)
+        fill!(dtdw, 0.0)
+    else
+        copyto!(dtdw, dtd)
     end
-    
     if damp_mode == 0
-        # Identity matrix
-        dtd .= 0.0
+        fill!(dtdw, 0.0)
         for i in 1:n
-            dtd[i, i] = 1.0
+            dtdw[i, i] = 1.0
         end
     elseif damp_mode == 1
-        # Diagonal scaling
         for i in 1:n
-            dtd[i, i] = max(jtj[i, i], dtd[i, i])
+            dtdw[i, i] = max(jtj[i, i], dtdw[i, i])
         end
     end
-    
+
     # Initialize lambda or delta
     if imethod < 10
-        # Initialize lambda
         lam = jtj[1, 1]
         for i in 2:n
             lam = max(jtj[i, i], lam)
         end
         lam = lam * initialfactor
     else
-        # Initialize trust region radius
-        delta = initialfactor * sqrt(dot(x, dtd * x))
+        mul!(W.tmp1, dtdw, x)
+        delta = initialfactor * sqrt(dot(x, W.tmp1))
         lam = 1.0
         if delta == 0.0
             delta = 100.0
         end
         if converged == 0
-            (v, lam) = trust_region(n, m, fvec, fjac, dtd, delta)
+            lam = trust_region!(v, W, n, m, fvec, fjac, dtdw, delta)
         end
     end
-    
+
     # Main optimization loop
     for istep in 1:maxiter
         niters = istep
-        
+
         info = 0
         if callback !== nothing
-            ret = callback(x, v, a, fvec, fjac, acc, lam, dtd, fvec_new, accepted, info)
+            ret = callback(x, v, a, fvec, fjac, acc, lam, dtdw, fvec_new, accepted, info)
             if ret !== nothing
                 info = ret
             end
         end
-        
+
         if info != 0
             converged = -10
             break
         end
-        
+
         # Update Functions
-        # Full or partial Jacobian Update?
         if accepted > 0 && ibroyden <= 0
             jac_force_update = true
         end
         if accepted + ibroyden <= 0 && !jac_uptodate
             jac_force_update = true  # Force jac update after too many failed attempts
         end
-        
+
         if accepted > 0 && ibroyden > 0 && !jac_force_update
-            # Rank deficient update of Jacobian matrix
-            update_jac!(m, n, fjac, fvec, fvec_new, acc, v, a)
+            update_jac!(W, m, n, fjac, fvec, fvec_new, acc, v, a)
             jac_uptodate = false
         end
-        
+
         if accepted > 0
-            # Accepted step
-            fvec = copy(fvec_new)
-            x = copy(x_new)
-            vold = copy(v)
+            copyto!(fvec, fvec_new)
+            copyto!(x, x_new)
+            copyto!(vold, v)
             C = Cnew
             if C <= Cbest
-                x_best = copy(x)
+                copyto!(x_best, x)
                 Cbest = C
-                fvec_best = copy(fvec)
+                copyto!(fvec_best, fvec)
             end
         end
-        
+
         if jac_force_update
-            # Full rank update of Jacobian
             if analytic_jac && jacobian !== nothing
                 jacobian(x, fjac)
                 njev = njev + 1
             else
-                fjac = fdjac(m, n, x, fvec, func, h1, center_diff)
+                fdjac!(fjac, W, m, n, x, fvec, func, h1, center_diff)
                 if center_diff
                     nfev = nfev + 2 * n
                 else
@@ -322,155 +325,133 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
             jac_uptodate = true
             jac_force_update = false
         end
-        
-        # Check fjac for NaNs
-        valid_result = !any(isnan.(fjac))
-        
-        if valid_result
-            # If no NaNs in Jacobian
-            jtj = fjac' * fjac
-            
-            # Update Scaling/lam/TrustRegion
+
+        if !any(isnan, fjac)
+            mul!(jtj, transpose(fjac), fjac)
+
             if istep > 1
                 if damp_mode == 1
-                    # Update diagonal scaling
                     for i in 1:n
-                        dtd[i, i] = max(jtj[i, i], dtd[i, i])
+                        dtdw[i, i] = max(jtj[i, i], dtdw[i, i])
                     end
                 end
-                
-                # Update lambda or delta
+
                 if imethod == 0
-                    # Update lam directly by fixed factors
                     lam = update_lam_factor(lam, accepted, factoraccept, factorreject)
                 elseif imethod == 1
-                    # Update lam based on Gain Factor rho (Nelson method)
                     lam = update_lam_nelson(lam, accepted, factoraccept, factorreject, rho)
                 elseif imethod == 2
-                    # Update lam using Umrigar and Nightingale method
-                    (lam, a_param) = update_lam_umrigar(m, n, lam, accepted, v, vold, fvec, fjac, dtd, a_param, C, Cnew)
+                    (lam, a_param) = update_lam_umrigar!(W, m, n, lam, accepted, v, vold,
+                                        fvec, fjac, dtdw, a_param, C, Cnew)
                 elseif imethod == 10
-                    # Update delta by fixed factors
                     delta = update_delta_factor(delta, accepted, factoraccept, factorreject)
-                    (v, lam) = trust_region(n, m, fvec, fjac, dtd, delta)
+                    lam = trust_region!(v, W, n, m, fvec, fjac, dtdw, delta)
                 elseif imethod == 11
-                    # Update delta as described in Moré reference
-                    (delta, lam) = update_delta_more(delta, lam, n, v, dtd, rho, C, Cnew, dirder, actred, av, avmax)
-                    (v, lam) = trust_region(n, m, fvec, fjac, dtd, delta)
+                    (delta, lam) = update_delta_more!(W, delta, lam, n, v, dtdw, rho, C,
+                                        Cnew, dirder, actred, av, avmax)
+                    lam = trust_region!(v, W, n, m, fvec, fjac, dtdw, delta)
                 end
             end
-            
-            # Propose Step
-            g = jtj + lam * dtd
-            
-            # Cholesky decomposition
-            # (L must be declared here because `try` introduces a new scope)
+
+            copyto!(g, jtj)
+            axpy!(lam, dtdw, g)
+
             L = nothing
+            info = 1
             try
                 L = cholesky(Hermitian(g, :U))
                 info = 0
             catch
                 info = 1
             end
-            
+
             if info == 0
-                # If matrix decomposition successful, solve the normal equations
-                # (J'J + lam*dtd)*v = -J'*f
-                v = -1.0 * (fvec' * fjac)[:]
-                v = L \ v
-                
-                # Calculate the predicted reduction and directional derivative
-                temp1 = 0.5 * dot(v, jtj * v) / C
-                temp2 = 0.5 * lam * dot(v, dtd * v) / C
+                mul!(v, transpose(fjac), fvec)
+                rmul!(v, -1.0)
+                ldiv!(v, L, v)
+
+                mul!(W.tmp1, jtj, v)
+                mul!(W.tmp2, dtdw, v)
+                temp1 = 0.5 * dot(v, W.tmp1) / C
+                temp2 = 0.5 * lam * dot(v, W.tmp2) / C
                 pred_red = temp1 + 2.0 * temp2
                 dirder = -1.0 * (temp1 + temp2)
-                
-                # Calculate cos_alpha -- cos of angle between step direction and residual
-                jv = fjac * v
+
+                mul!(jv, fjac, v)
                 cos_alpha = abs(dot(fvec, jv)) / (sqrt(dot(fvec, fvec)) * sqrt(dot(jv, jv)))
-                
+
                 if imethod < 10
-                    delta = sqrt(dot(v, dtd * v))
+                    delta = sqrt(dot(v, W.tmp2))
                 end
-                
-                # Update acceleration
+
                 if iaccel > 0
                     if analytic_Avv && Avv !== nothing
                         Avv(x, v, acc)
                         naev = naev + 1
                     else
-                        acc = fd_avv(m, n, x, v, fvec, fjac, func, jac_uptodate, h2)
+                        fd_avv!(acc, W, m, n, x, v, fvec, fjac, func, jac_uptodate, h2)
                         if jac_uptodate
                             nfev = nfev + 1
                         else
                             nfev = nfev + 2  # We don't use Jacobian if not up to date
                         end
                     end
-                    
-                    # Check acceleration for NaNs
-                    if !any(isnan.(acc))
-                        a = -1.0 * (acc' * fjac)[:]
-                        a = L \ a
+
+                    if !any(isnan, acc)
+                        mul!(a, transpose(fjac), acc)
+                        rmul!(a, -1.0)
+                        ldiv!(a, L, a)
                     else
-                        a .= 0.0  # If NaNs in acc, ignore acceleration term
+                        fill!(a, 0.0)
                     end
                 end
-                
-                # Evaluate at proposed step -- only necessary if av <= avmax
-                av = sqrt(dot(a, dtd * a) / dot(v, dtd * v))
-                
+
+                mul!(W.tmp1, dtdw, a)
+                mul!(W.tmp2, dtdw, v)
+                av = sqrt(dot(a, W.tmp1) / dot(v, W.tmp2))
+
                 if av <= avmax
-                    x_new = x + v + 0.5 * a
+                    copyto!(x_new, x)
+                    axpy!(1.0, v, x_new)
+                    axpy!(0.5, a, x_new)
                     func(x_new, fvec_new)
                     nfev = nfev + 1
                     Cnew = 0.5 * dot(fvec_new, fvec_new)
-                    Cold = C
-                    
-                    # Check for NaNs in fvec_new
-                    if !any(isnan.(fvec_new))
-                        # If no NaNs, proceed as normal
+
+                    if !any(isnan, fvec_new)
                         actred = 1.0 - Cnew / C
                         rho = 0.0
                         if pred_red != 0.0
                             rho = (1.0 - Cnew / C) / pred_red
                         end
-                        
-                        # Accept or Reject proposed step
-                        accepted = acceptance(n, C, Cnew, Cbest, ibold, dtd, v, vold)
+                        accepted = acceptance!(W, n, C, Cnew, Cbest, ibold, dtdw, v, vold)
                     else
-                        # If NaNs in fvec_new, reject step
                         actred = 0.0
                         rho = 0.0
                         accepted = min(accepted - 1, -1)
                     end
                 else
-                    # If acceleration too large, reject
                     accepted = min(accepted - 1, -1)
                 end
             else
-                # If matrix factorization fails, reject step
                 accepted = min(accepted - 1, -1)
             end
         else
-            # If NaNs in Jacobian
             converged = -11
             break
         end
-        
-        # Check Convergence
+
         if converged == 0
-            (converged, counter) = convergence_check(m, n, accepted, counter, C, Cnew, x, fvec, fjac, lam, 
-                                                    x_new, nfev, maxfev, njev, maxjev, naev, maxaev, maxlam, 
-                                                    minlam, artol, Cgoal, gtol, xtol, xrtol, ftol, frtol, cos_alpha)
-            
+            (converged, counter) = convergence_check!(W, m, n, accepted, counter, C, Cnew,
+                                    x, fvec, fjac, lam, x_new, nfev, maxfev, njev, maxjev,
+                                    naev, maxaev, maxlam, minlam, artol, Cgoal, gtol, xtol,
+                                    xrtol, ftol, frtol, cos_alpha)
             if converged == 1 && !jac_uptodate
-                # If converged by artol with out-of-date Jacobian, update to confirm
                 converged = 0
                 jac_force_update = true
             end
         end
-        
-        # Print status
+
         if print_level == 2 && accepted > 0
             println(print_unit, "  istep, nfev, njev, naev, accepted: ", istep, " ", nfev, " ", njev, " ", naev, " ", accepted)
             println(print_unit, "  Cost, lam, delta: ", C, " ", lam, " ", delta)
@@ -498,32 +479,28 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
             println(print_unit, "  a = ", a)
             flush(print_unit)
         end
-        
-        # If converged -- return
+
         if converged != 0
             break
         end
-        
+
         if accepted >= 0
             jac_uptodate = false  # Jacobian is now out of date
         end
     end
-    
-    # End main loop
-    
-    # If not converged
+
     if converged == 0
         converged = -1
     end
-    
-    # Return best fit found (also write it back into the caller's arrays)
-    x_in .= x_best
-    fvec_in .= fvec_best
-    
+
+    # Return best fit found (write it back into the caller's arrays)
+    copyto!(x, x_best)
+    copyto!(fvec, fvec_best)
+
     if print_level >= 1
         println(print_unit, "Optimization finished")
         println(print_unit, "Results:")
-        println(print_unit, "  Converged:    ", get(converged_info, converged, "Unknown"), " (", converged, ")")
+        println(print_unit, "  Converged:    ", get(CONVERGED_INFO, converged, "Unknown"), " (", converged, ")")
         println(print_unit, "  Final Cost:   ", 0.5 * dot(fvec_best, fvec_best))
         if m > n
             println(print_unit, "  Cost/DOF:     ", 0.5 * dot(fvec_best, fvec_best) / (m - n))
@@ -534,6 +511,6 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
         println(print_unit, "  naev:         ", naev)
         flush(print_unit)
     end
-    
-    return (x_in, fvec_in, niters, nfev, njev, naev, converged)
+
+    return (x, fvec, niters, nfev, njev, naev, converged)
 end

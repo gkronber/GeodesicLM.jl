@@ -22,6 +22,31 @@ solver, smallest-singular-value estimator, machine parameters, convergence
 codes), across different solver configurations (analytic vs. finite-difference
 derivatives, all update methods, damping modes, bold acceptance criteria).
 
+## Inner-loop use / allocations
+
+`geodesiclm` reuses a pre-allocated `GLMWorkspace` (all internal buffers) via a
+OncePerTask lazy cache, so repeated calls on the same task allocate almost
+nothing (the residual is mostly the Cholesky factor). This makes it suitable for
+calling from a hot loop; different Julia tasks each get their own workspace, so
+it is thread-safe.
+
+```julia
+x   = [0.0, 0.0]
+fvec = zeros(2)
+for _ in 1:10_000
+    fill!(x, 0); fill!(fvec, 0)
+    geodesiclm(my_residual!, nothing, nothing; x=x, fvec=fvec, n=2, m=2)
+end
+```
+
+You may also construct and pass a `GLMWorkspace(n, m)` explicitly via the `ws`
+keyword to share buffers with other code (e.g. an analytic Jacobian scratch):
+
+```julia
+ws = GLMWorkspace(n, m)
+geodesiclm(..., n=n, m=m, ws=ws)
+```
+
 ## Benchmarking
 
 Performance across git revisions is tracked with
