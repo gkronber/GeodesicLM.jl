@@ -392,7 +392,10 @@ function dgqt!(x::Vector{Float64}, ws::GLMWorkspace, n::Int, A_input::Matrix{Flo
         indef = 1
         L = nothing
         try
-            L = cholesky(Hermitian(A, :U))
+            # Factor in place. On ':U' only the upper triangle of `A` is
+            # overwritten; `A`'s lower triangle (the original g) is preserved
+            # and used to rebuild the upper next iteration.
+            L = cholesky!(Hermitian(A, :U))
             indef = 0
         catch
             indef = 1

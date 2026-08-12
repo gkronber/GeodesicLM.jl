@@ -359,7 +359,9 @@ function geodesiclm(func::Function, jacobian::Union{Function, Nothing}, Avv::Uni
             L = nothing
             info = 1
             try
-                L = cholesky(Hermitian(g, :U))
+                # Factor in place (overwrites the upper triangle of `g`, which
+                # is rebuilt every iteration, so this is safe).
+                L = cholesky!(Hermitian(g, :U))
                 info = 0
             catch
                 info = 1
