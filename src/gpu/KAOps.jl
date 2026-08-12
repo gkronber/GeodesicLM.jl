@@ -34,6 +34,7 @@ export backend, backend_of, nthreads
 export fill!, copyto!, axpy!, scale!
 export dot!, norm2, nanflag
 export mul!, AtA!
+export cholesky!, solve_chol!
 export alloc, device_array
 
 ###############################################################################
@@ -299,6 +300,107 @@ only (used for NaN guards on x / fvec / fjac). Returns a host Bool.
 function nanflag(a)
     arr = collect(a)                 # host copy (small arrays in the LM loop)
     return any(x -> !isfinite(x), arr)
+end
+
+###############################################################################
+# In-place Cholesky factorization + solves (n small; one work-item per matrix)
+#
+# The input matrix `g` is symmetric and stored with its **upper triangle**
+# meaningful (as `Hermitian(g, :U)` in the CPU code). The factor `U` (with
+# `U'U = g`) is written back into the upper triangle of `A` in place, exactly as
+# `LinearAlgebra.cholesky!(Hermitian(A, :U))` would. A single work-item does the
+# whole factorization, which is fine for the tiny `n` of an LM problem. The
+# kernel is designed so it can be extended to a batched variant (one work-item
+# per matrix) later.
+###############################################################################
+
+# info is a length-1 device integer array: 0 = success, 1 = not PD
+@kernel function _cholesky_upper_kernel!(A, n, info)
+    i = @index(Global, Linear)
+    if i == 1
+        ok = true
+        @inbounds for k in 1:n
+            s = A[k, k]
+            for r in 1:(k - 1)
+                s -= A[r, k] * A[r, k]
+            end
+            if s <= 0.0
+                ok = false
+                break
+            end
+            A[k, k] = sqrt(s)
+            for i in (k + 1):n
+                t = A[k, i]
+                for r in 1:(k - 1)
+                    t -= A[r, k] * A[r, i]
+                end
+                A[k, i] = t / A[k, k]
+            end
+        end
+        info[1] = ok ? 0 : 1
+    end
+end
+
+"""
+    cholesky!(A, info) -> Bool
+
+In-place upper-triangle Cholesky of the symmetric matrix `A` (`n`×`n`). On
+success the upper triangle of `A` holds the factor `U` and `info[1]` is set to
+`0`; on a non-positive-definite matrix `info[1]` is set to `1` and `false` is
+returned. `info` is a length-1 device integer array; a convenience form
+`cholesky!(A)` allocates that buffer and returns just the `Bool`.
+"""
+function cholesky!(A, info)
+    n = size(A, 1)
+    b = backend(A)
+    ev = _cholesky_upper_kernel!(b)(A, n, info; ndrange=1)
+    _sync(ev)
+    return info[1] == 0
+end
+
+function cholesky!(A)
+    info = alloc(Int, backend(A), 1)
+    ok = cholesky!(A, info)
+    return ok
+end
+
+# Solve A*x = b where A is symmetric and its upper Cholesky factor U has already
+# been written into the upper triangle of A by cholesky!.
+@kernel function _solve_chol_kernel!(x, A, b, n)
+    i = @index(Global, Linear)
+    if i == 1
+        # forward: x = U' \ b  (U' is lower, entries U[r,i] with r<=i)
+        @inbounds for i in 1:n
+            s = b[i]
+            for r in 1:(i - 1)
+                s -= A[r, i] * x[r]
+            end
+            x[i] = s / A[i, i]
+        end
+        # back: x = U \ x
+        @inbounds for i in n:-1:1
+            s = x[i]
+            for r in (i + 1):n
+                s -= A[i, r] * x[r]
+            end
+            x[i] = s / A[i, i]
+        end
+    end
+end
+
+"""
+    solve_chol!(x, A, b)
+
+Solve `x = A \\\\ b` in place, using the Cholesky factor of the symmetric `A`
+stored in its upper triangle (as produced by `cholesky!`). Results are
+undefined if `A` is not a valid factor.
+"""
+function solve_chol!(x, A, b)
+    n = length(x)
+    bd = backend(x)
+    ev = _solve_chol_kernel!(bd)(x, A, b, n; ndrange=1)
+    _sync(ev)
+    return x
 end
 
 end # module KAOps

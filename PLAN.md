@@ -1,7 +1,7 @@
 # GPU support for GeodesicLM — implementation plan
 
 **Branch:** `GPU`
-**Status:** foundation (M0–M2) implemented & unit-tested; see `src/gpu/KAOps.jl`
+**Status:** foundation (M0–M3) implemented & unit-tested; see `src/gpu/KAOps.jl`
 and `test/gpu_kernels.jl`. This document is the reviewable roadmap for the
 remaining work.
 
@@ -44,7 +44,7 @@ Design assumptions (per the request):
                      ▼
         ┌──────────────────────────────────────────────────────────┐
         │               GPU / device (KAOps + user kernels)        │
-        │  x (n)         params            fvec (m)  residuals      │
+        │  x (n)         params            fvec (m)  residuals     │
         │  fjac (m×n)    Jacobian          jtj (n×n), g (n×n)      │
         │  v, vold, a (n) step/acc         dtd (n×n) damping       │
         │  user:  f_kernel!(x, fvec, data…)                        │
@@ -84,8 +84,7 @@ end
   `m` rows). `grad!` (optional) writes device `fjac`; if absent we provide a
   GPU **finite-difference** Jacobian using KAOps + `fun!` (as in the CPU code,
   `fdjac!` / `fd_avv!`), so analytic gradients are optional but recommended.
-- Public entry point `geodesiclm_gpu(goal::GPUObjective; x, n, m, kwargs…)`.
-  (Name TBD; an alternative is dispatching on the `GPUObjective` type.)
+- Public entry point `geodesiclm(goal::GPUObjective; x, n, m, kwargs…)`, dispatching on the `GPUObjective` type.
 
 ## 6. Kernel building blocks needed (KAOps)
 
@@ -99,15 +98,21 @@ Implemented & unit-tested (M0–M2):
 | `dot!`, `norm2` | reductions (two-stage: grid-stride + serial final) | done |
 | `nanflag` | NaN guard on `x`/`fvec`/`fjac` | done |
 
-Not yet implemented (M3+):
+Not yet implemented (M4+):
 
 | Kernel | Purpose | Notes |
 |--------|---------|-------|
-| `cholesky!` (n×n, :U) | factor `g = jtj + λ·dtd` | single-thread block; tiny n; `PosDef` failure path |
-| triangular solves `ldiv!` | `v = L\u`, `a = L\u` | small n; single thread |
 | `axpy_mat!` (`g = jtj + λ·dtd`) | — | trivial, can be an elementwise kernel over n² |
 | compose `x_new = x + v + ½a` | — | compose existing elementwise ops |
 | GPU `fdjac!` / `fd_avv!` | finite-difference (optional) | built on `fun!` + elementwise ops |
+
+Already implemented (M0–M3): elementwise ops, `mul!` (both orientations),
+`AtA!`, `dot!`/`norm2`, `nanflag`, and an in-place upper-triangle **`cholesky!`**
+plus **`solve_chol!`** (forward+back substitution) written as our own kernels
+(not vendor-specific LinearAlgebra for GPU arrays — see note below).
+> Note: write our own `cholesky!`/`solve_chol!` kernels even though CUDA.jl and
+> Metal.jl provide some LinearAlgebra methods for `CuArray`/`Mtl.Array`; keeping
+> the linear algebra in KAOps keeps the code backend-agnostic and small.
 
 ## 7. Milestones
 
@@ -124,14 +129,14 @@ Not yet implemented (M3+):
 **M2 — Mat-vec & matmul** (done)
 - `mul!` (both orientations), `AtA!` (`J'J`). Tests vs. `*`/`'`.
 
-**M3 — Cholesky & triangular solves (next priority)**
-- Write `cholesky!` over the upper triangle of an in-place `n×n` buffer (mirror
-  the CPU `cholesky!` already used), with a `PosDef` failure signal via `info`.
-- Write single-thread `ldiv!` (forward/back substitution) using the factor.
-- **Exploratory tests:** symmetric positive-definite `g` of sizes
-  `n ∈ {2,3,5,10,20}` → factor, solve `g*L\u ≈ u`; indefinite matrices → failure
-  path returns the same `info` as the CPU routine. Compare against
-  `LinearAlgebra.cholesky` on the CPU backend.
+**M3 — Cholesky & triangular solves** (done)
+- Wrote `cholesky!` over the upper triangle of an in-place `n×n` buffer (mirrors
+  the CPU `cholesky!`), with a `PosDef` failure signal via an `info` flag.
+- Wrote single-thread `solve_chol!` (forward then back substitution) using the
+  in-place factor.
+- **Exploratory tests** (see `test/gpu_kernels.jl`): symmetric PD `g` for
+  `n ∈ {2,3,5,10,20}` → `U'U ≈ g`, and `g * (A\b) ≈ b`; an indefinite matrix
+  hits the failure path (`info[1] == 1`, returns `false`).
 
 **M4 — GPUWorkspace + OncePerTask (backend-aware)**
 - Device-array workspace mirroring `GLMWorkspace`; `_get_workspace(n, m, backend)`.
@@ -153,7 +158,7 @@ Not yet implemented (M3+):
   `cos_alpha`, `pred_red` of the CPU routine for a fixed snapshot of
   `(x, fvec, fjac, λ, dtd)`. This is the single most important correctness gate.
 
-**M7 — Full `geodesiclm_gpu` orchestrator**
+**M7 — Full `geodesiclm` GPU orchestrator**
 - Host loop that calls the M6 step, user kernels, convergence check, λ/δ
   updates (scalars on host) — a faithful port of `geodesiclm_alg.jl` control
   flow, but every array op is a KAOps kernel.
@@ -177,8 +182,11 @@ Not yet implemented (M3+):
 2. **Snapshot regression test (M6)**: freeze one LM iteration's inputs and assert
    the GPU/CPU assembly produce identical `v`, `av`, `cos_alpha`, `pred_red`.
    Catches subtle kernel bugs (indexing, associativity) in isolation.
-3. **Cholesky cross-check (M3)**: compare the custom `cholesky!`/`ldiv!` against
-   `LinearAlgebra` for both PD and indefinite inputs.
+3. **Cholesky cross-check (M3)**: the custom `cholesky!`/`solve_chol!` are
+   validated against the fundamental identities (`U'U ≈ g`, `g·(A\b) ≈ b`) and
+   the old `LinearAlgebra.cholesky` on the CPU backend for both PD and
+   indefinite inputs. On a GPU we deliberately use our own kernels rather than
+   CUDA/Metal LinearAlgebra methods, to stay backend-agnostic.
 4. Bump `test_backends()` to `[CPU()]` by default and add
    `using Metal` / `using CUDA` guarded by `Base.find_package` so CI without a
    GPU still passes and GPU runs are opt-in.
@@ -188,25 +196,30 @@ Not yet implemented (M3+):
 1. **Public API shape** — separate `geodesiclm_gpu(goal, …)` vs. keyword-based
    dispatch on a `GPUObjective`. I propose the former (keeps the CPU API
    untouched).
+   > Note: no we use use the name `geodesiclm(...)`  and dispatch on the objective type.
 2. **Reduction portability** — current `dot!`/`norm2` uses a simple grid-stride +
    serial-final reduction (correct everywhere, not tree-optimal). For very large
    `m` this could be a bottleneck; OK to leave for now given the "don't tune"
    premise, or swap in a workgroup-tree reduction later.
+  > Note: it should be easy to implement a parallel scan reduction for sums.
 3. **`f`/gradient kernel signature** — should the kernel capture a closure over
    device `data`, or should we pass a fixed tuple of user buffers explicitly
    (better for GPU codegen/const-capture)? Recommend explicit buffers.
+  > Note: Pass a tuple of user buffers.
 4. **Element type** — assume `Float64` device buffers (CUDA/Metal support it,
    Metal via float64 buffers). Keep `eltype`-generic kernels anyway.
+  > Note: The implementation should work for single and double precision. 
 5. **Batched use-case** — is the target a single problem on GPU, or *many
    independent problems* (batched LM)? If batched, the whole workspace scheme
    becomes arrays of `(n_batch × …)` and Cholesky becomes a batched factor.
    This changes M3/M4 design; please confirm the intended use-case.
+  > Note: The idea is to start multiple optimizations (for different `f`) in parallel and rely on the GPU scheduler to saturate the hardware. I'm not sure about the meaning of batching. 
 
 ## 10. Deliverables per review checkpoint
 
 | Checkpoint | Deliverable |
 |-----------|-------------|
-| This branch | `PLAN.md`; `src/gpu/KAOps.jl` (M0–M2); `test/gpu_kernels.jl`; all 127 tests green |
-| Next (M3–M5) | `cholesky!`/`ldiv!` kernels + tests; `GPUWorkspace`; `GPUObjective` + `fdjac!` |
-| After (M6–M7) | on-device LM step + full `geodesiclm_gpu`, matching CPU results |
-| Final (M8) | Metal/CUDA test runs, docs, optional batched mode |
+| This branch | `PLAN.md`; `src/gpu/KAOps.jl` (M0–M3); `test/gpu_kernels.jl`; all 127 tests green |
+| Next (M4–M5) | `GPUWorkspace`; `GPUObjective` + `fdjac!` |
+| After (M6–M7) | on-device LM step + full `geodesiclm` (dispatching on `GPUObjective`), matching CPU results |
+| Final (M8) | Metal/CUDA test runs, docs, parallel multi-problem saturation |

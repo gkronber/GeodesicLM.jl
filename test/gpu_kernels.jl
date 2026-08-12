@@ -99,4 +99,41 @@ end
         @test KAOps.nanflag([1.0, Inf])
     end
 
+    @testset "cholesky! (M3)" begin
+        # helper: symmetric PD matrix
+        pd(n) = begin
+            B = reshape(_rnd(n * n), n, n)
+            X = transpose(B) * B + n * Matrix(I, n, n)
+            (X .+ transpose(X)) ./ 2   # force numerical symmetry
+        end
+        for n in (2, 3, 5, 10, 20)
+            G = pd(n)
+            A = copy(G)                 # f x f upper triangle is what we factor
+            info = zeros(Int, 1)
+            ok = KAOps.cholesky!(A, info)
+            @test ok && info[1] == 0
+
+            # Reconstruct U'U == G from the stored upper triangle.
+            U = zeros(n, n)
+            for i in 1:n, j in i:n
+                U[i, j] = A[i, j]
+            end
+            @test isapprox(transpose(U) * U, G; atol=1e-8 * n)
+
+            # Solve g*x = b and check residuals.
+            b = _rnd(n)
+            x = zeros(n)
+            KAOps.solve_chol!(x, A, b)
+            @test isapprox(G * x, b; atol=1e-8 * n)
+        end
+
+        # Indefinite matrix must fail (return false, info[1] == 1).
+        Gind = [1.0 2.0; 2.0 1.0]
+        Aind = copy(Gind)
+        info = zeros(Int, 1)
+        ok = KAOps.cholesky!(Aind, info)
+        @test !ok
+        @test info[1] == 1
+    end
+
 end
