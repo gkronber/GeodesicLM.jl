@@ -242,7 +242,7 @@ function geodesiclm(obj::GPUObjective; x, fvec, n::Int, m::Int,
         "GPUWorkspace sized for (n=$(W.n), m=$(W.m)) does not match (n=$n, m=$m)")
 
     # ---- init scalars (mirror CPU) ----
-    KAOps.fill!(W.v, 0.0); KAOps.fill!(W.vold, 0.0); KAOps.fill!(W.a, 0.0)
+    KAOps.fill!(W.v, zero(T)); KAOps.fill!(W.vold, zero(T)); KAOps.fill!(W.a, zero(T))
     lam = T(0); delta = T(0); cos_alpha = T(1); av = T(0); a_param = T(0.5)
     pred_red = T(0); dirder = T(0); actred = T(0); rho = T(0)
     C = T(0); Cnew = T(0); converged = 0; nfev = 0; njev = 0; naev = 0
@@ -272,16 +272,16 @@ function geodesiclm(obj::GPUObjective; x, fvec, n::Int, m::Int,
     if KAOps.nanflag(W.fjac)
         converged = -11; maxiter = 0
     end
-    KAOps.fill!(W.acc, 0.0); KAOps.fill!(W.a, 0.0)
+    KAOps.fill!(W.acc, zero(T)); KAOps.fill!(W.a, zero(T))
 
     # damping matrix
     if dtd === nothing
-        KAOps.fill!(W.dtd, 0.0)
+        KAOps.fill!(W.dtd, zero(T))
     else
         KAOps.copyto!(W.dtd, dtd)
     end
     if damp_mode == 0
-        KAOps.fill!(W.dtd, 0.0)
+        KAOps.fill!(W.dtd, zero(T))
         KAOps.fill_diag!(W.dtd, T(1))
     elseif damp_mode == 1
         KAOps.maxdiag!(W.dtd, W.jtj)
@@ -378,8 +378,8 @@ function geodesiclm(obj::GPUObjective; x, fvec, n::Int, m::Int,
                 end
             end
 
-            r = gpu_step!(W, obj, lam, C, Cbest, accepted, ibold, avmax,
-                          jac_uptodate, h2)
+            r = gpu_step!(W, obj, lam, C, Cbest, accepted, ibold, T(avmax),
+                          jac_uptodate, T(h2))
             nfev += r.nev
             accepted = r.accepted
             cos_alpha = r.cos_alpha; pred_red = r.pred_red

@@ -355,7 +355,7 @@ function cholesky!(A, info)
     b = backend(A)
     ev = _cholesky_upper_kernel!(b)(A, n, info; ndrange=1)
     _sync(ev)
-    return info[1] == 0
+    return Array(info)[1] == 0
 end
 
 function cholesky!(A)

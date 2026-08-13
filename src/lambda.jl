@@ -62,7 +62,7 @@ Update lam based on accepted/rejected step using fixed factors.
 # Returns
 - `lam`: updated Levenberg-Marquardt parameter
 """
-function update_lam_factor(lam::Float64, accepted::Int, factoraccept::Float64, factorreject::Float64)
+function update_lam_factor(lam::AbstractFloat, accepted::Int, factoraccept::Real, factorreject::Real)
     if accepted >= 0
         lam = lam / factoraccept
     else
@@ -86,7 +86,7 @@ Update lam using the Nelson method.
 # Returns
 - `lam`: updated Levenberg-Marquardt parameter
 """
-function update_lam_nelson(lam::Float64, accepted::Int, factoraccept::Float64, factorreject::Float64, rho::Float64)
+function update_lam_nelson(lam::AbstractFloat, accepted::Int, factoraccept::Real, factorreject::Real, rho::Real)
     if accepted >= 0
         lam = lam * max(1.0 / factoraccept, 1.0 - (factorreject - 1.0) * (2.0 * rho - 1.0)^3)
     else
@@ -184,7 +184,7 @@ Update delta (trust region radius) based on accepted/rejected step using fixed f
 # Returns
 - `delta`: updated trust region radius
 """
-function update_delta_factor(delta::Float64, accepted::Int, factoraccept::Float64, factorreject::Float64)
+function update_delta_factor(delta::AbstractFloat, accepted::Int, factoraccept::Real, factorreject::Real)
     if accepted >= 0
         delta = delta * factoraccept
     else

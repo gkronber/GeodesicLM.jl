@@ -67,7 +67,7 @@ end
 @kernel function _avv_jac_kernel!(acc, ftmp, fvec, jtv, m, h, invh)
     k = @index(Global, Linear)
     if k <= m
-        acc[k] = 2.0 * invh * ((ftmp[k] - fvec[k]) * invh - jtv[k])
+        acc[k] = 2.0f0 * invh * ((ftmp[k] - fvec[k]) * invh - jtv[k])
     end
 end
 
@@ -108,10 +108,10 @@ function jac!(w::GPUWorkspace, obj::GPUObjective, center_diff::Bool = true,
         invh = one(T) / h
         if center_diff
             KAOps.copyto!(w.x_plus, w.x)
-            _addto_kernel!(be)(w.x_plus, i, 0.5 * h; ndrange = n)
+            _addto_kernel!(be)(w.x_plus, i, T(0.5) * h; ndrange = n)
             obj.fun!(be, w.x_plus, w.fvec_plus, obj.data)
             KAOps.copyto!(w.x_minus, w.x)
-            _addto_kernel!(be)(w.x_minus, i, -0.5 * h; ndrange = n)
+            _addto_kernel!(be)(w.x_minus, i, -T(0.5) * h; ndrange = n)
             obj.fun!(be, w.x_minus, w.fvec_minus, obj.data)
             ev = _fdcol_kernel!(be)(w.fjac, w.fvec_plus, w.fvec_minus, m, i, invh; ndrange = m)
             KAOps._sync(ev)

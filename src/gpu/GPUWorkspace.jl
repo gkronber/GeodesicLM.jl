@@ -33,48 +33,48 @@ struct GPUWorkspace{T,B}
     m::Int
     backend::B
     # state / step (n)
-    x::Vector{T}
-    x_new::Vector{T}
-    x_best::Vector{T}
-    v::Vector{T}
-    vold::Vector{T}
-    a::Vector{T}
+    x::AbstractVector{T}
+    x_new::AbstractVector{T}
+    x_best::AbstractVector{T}
+    v::AbstractVector{T}
+    vold::AbstractVector{T}
+    a::AbstractVector{T}
     # residuals (m)
-    fvec::Vector{T}
-    fvec_new::Vector{T}
-    fvec_best::Vector{T}
-    jv::Vector{T}
-    acc::Vector{T}             # second directional derivative (m)
+    fvec::AbstractVector{T}
+    fvec_new::AbstractVector{T}
+    fvec_best::AbstractVector{T}
+    jv::AbstractVector{T}
+    acc::AbstractVector{T}             # second directional derivative (m)
     # matrices
-    fjac::Matrix{T}      # m×n
-    jtj::Matrix{T}       # n×n
-    g::Matrix{T}         # n×n
-    dtd::Matrix{T}       # n×n
+    fjac::AbstractMatrix{T}      # m×n
+    jtj::AbstractMatrix{T}       # n×n
+    g::AbstractMatrix{T}         # n×n
+    dtd::AbstractMatrix{T}       # n×n
     # scratch (n)
-    tmp1::Vector{T}
-    tmp2::Vector{T}
-    tmp3::Vector{T}
+    tmp1::AbstractVector{T}
+    tmp2::AbstractVector{T}
+    tmp3::AbstractVector{T}
     # finite-difference temporaries
-    x_plus::Vector{T}        # n
-    x_minus::Vector{T}       # n
-    fvec_plus::Vector{T}     # m
-    fvec_minus::Vector{T}    # m
-    xtmp::Vector{T}          # n
-    ftmp::Vector{T}          # m
-    acc_tmp::Vector{T}       # m
-    grad::Vector{T}          # n
+    x_plus::AbstractVector{T}        # n
+    x_minus::AbstractVector{T}       # n
+    fvec_plus::AbstractVector{T}     # m
+    fvec_minus::AbstractVector{T}    # m
+    xtmp::AbstractVector{T}          # n
+    ftmp::AbstractVector{T}          # m
+    acc_tmp::AbstractVector{T}       # m
+    grad::AbstractVector{T}          # n
     # trust-region scratch
-    jtilde::Matrix{T}        # m×n
-    gt::Matrix{T}            # n×n
-    gradC::Vector{T}         # n
-    dgqtA::Matrix{T}         # n×n
-    z::Vector{T}             # n
-    wa1::Vector{T}           # n
-    wa2::Vector{T}           # n
+    jtilde::AbstractMatrix{T}        # m×n
+    gt::AbstractMatrix{T}            # n×n
+    gradC::AbstractVector{T}         # n
+    dgqtA::AbstractMatrix{T}         # n×n
+    z::AbstractVector{T}             # n
+    wa1::AbstractVector{T}           # n
+    wa2::AbstractVector{T}           # n
     # scalars
-    scalar::Vector{T}        # length 1
-    scalar2::Vector{T}       # length 1
-    info::Vector{Int}        # length 1
+    scalar::AbstractVector{T}        # length 1
+    scalar2::AbstractVector{T}       # length 1
+    info::AbstractVector{Int}        # length 1
 end
 
 function GPUWorkspace(n::Int, m::Int, ::Type{T}, backend) where {T}
