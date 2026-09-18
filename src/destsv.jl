@@ -4,7 +4,7 @@
 using LinearAlgebra
 
 """
-    destsv(n::Int, R::Matrix{Float64})
+    destsv(n::Int, R::AbstractMatrix{T}) where {T<:AbstractFloat}
 
 Estimate the smallest singular value and associated singular vector of an 
 n by n upper triangular matrix R.
@@ -25,14 +25,14 @@ norm(y)/norm(z) in the Euclidean norm.
 # Returns
 - `(svmin, z)`: tuple with estimated smallest singular value and associated singular vector
 """
-function destsv(n::Int, R::AbstractMatrix{Float64})
-    
-    const_p01 = 1.0e-2
-    const_one = 1.0
-    const_zero = 0.0
-    
+function destsv(n::Int, R::AbstractMatrix{T}) where {T<:AbstractFloat}
+
+    const_p01 = T(1.0e-2)
+    const_one = one(T)
+    const_zero = zero(T)
+
     # Initialize z
-    z = zeros(Float64, n)
+    z = zeros(T, n)
     
     # This choice of e makes the algorithm scale invariant.
     e = abs(R[1, 1])
@@ -78,7 +78,9 @@ function destsv(n::Int, R::AbstractMatrix{Float64})
             for j in (i+1):n
                 z[j] = z[j] + w * R[i, j]
             end
-            s = s + sum(abs.(z[(i+1):n]))
+            for j in (i+1):n
+                s = s + abs(z[j])
+            end
         end
         
         if s < sm
@@ -117,7 +119,7 @@ function destsv(n::Int, R::AbstractMatrix{Float64})
     end
     
     # Compute svmin and normalize z.
-    znorm = 1.0 / norm(z)
+    znorm = one(T) / norm(z)
     svmin = ynorm * znorm
     z = z .* znorm
     

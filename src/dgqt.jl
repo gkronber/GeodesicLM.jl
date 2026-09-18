@@ -4,8 +4,8 @@
 using LinearAlgebra
 
 """
-    dgqt(n::Int, A::Matrix{Float64}, b::Vector{Float64}, delta::Float64, 
-         rtol::Float64=1.0e-3, atol::Float64=1.0e-3, itmax::Int=10, par::Float64=0.0)
+    dgqt(n::Int, A::AbstractMatrix{T}, b::AbstractVector{T}, delta::T,
+         rtol::T=T(1.0e-3), atol::T=T(1.0e-3), itmax::Int=10, par::T=zero(T)) where {T<:AbstractFloat}
 
 Minimize a quadratic function subject to a Euclidean norm constraint.
 
@@ -33,20 +33,21 @@ abs(norm(x) - delta) <= rtol*delta.
 # Returns
 - `(x, par, info, f)`: solution vector, Lagrange multiplier, convergence info, and final function value
 """
-function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float64,
-              rtol::Float64=1.0e-3, atol::Float64=1.0e-3, itmax::Int=10, par::Float64=0.0)
-    
+function dgqt(n::Int, A_input::AbstractMatrix{T}, b::AbstractVector{T}, delta::T,
+              rtol::T=T(1.0e-3), atol::T=T(1.0e-3), itmax::Int=10,
+              par::T=zero(T)) where {T<:AbstractFloat}
+
     # Constants
-    const_p001 = 1.0e-3
-    const_p5 = 0.5
-    const_zero = 0.0
-    const_one = 1.0
-    
+    const_p001 = T(1.0e-3)
+    const_p5 = T(0.5)
+    const_zero = zero(T)
+    const_one = one(T)
+
     # Initialize output arrays
-    x = zeros(Float64, n)
-    z = zeros(Float64, n)
-    wa1 = zeros(Float64, n)
-    wa2 = zeros(Float64, n)
+    x = zeros(T, n)
+    z = zeros(T, n)
+    wa1 = zeros(T, n)
+    wa2 = zeros(T, n)
     
     # Work with a copy of A since we modify it
     A = copy(A_input)
@@ -100,10 +101,10 @@ function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float
     par = min(par, paru)
     
     # Special case: parl = paru
-    paru = max(paru, (1.0 + rtol) * parl)
+    paru = max(paru, (const_one + rtol) * parl)
     
     # Beginning of an iteration.
-    f = 0.0
+    f = const_zero
     for iter in 1:itmax
         
         # Safeguard par.
@@ -148,7 +149,7 @@ function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float
             
             # Test for convergence.
             if abs(xnorm - delta) <= rtol * delta || 
-               (par == const_zero && xnorm <= (1.0 + rtol) * delta)
+               (par == const_zero && xnorm <= (const_one + rtol) * delta)
                 info = 1
             end
             
@@ -167,7 +168,7 @@ function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float
                 temp = (delta - xnorm) * ((delta + xnorm) / delta)
                 alpha = temp / (abs(prod) + sqrt(prod^2 + temp / delta))
                 alpha = sign(alpha) * abs(alpha)
-                if prod < 0.0
+                if prod < const_zero
                     alpha = -alpha
                 end
                 
@@ -180,7 +181,7 @@ function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float
                 
                 # Test for convergence.
                 if const_p5 * (rznorm / delta)^2 <= 
-                   rtol * (1.0 - const_p5 * rtol) * (par + (rxnorm / delta)^2)
+                   rtol * (const_one - const_p5 * rtol) * (par + (rxnorm / delta)^2)
                     info = 1
                 elseif const_p5 * (par + (rxnorm / delta)^2) <= (atol / delta) / delta && info == 0
                     info = 2
@@ -194,7 +195,7 @@ function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float
                 parc = -par
             else
                 wa2 = copy(x)
-                temp = 1.0 / xnorm
+                temp = const_one / xnorm
                 wa2 = wa2 .* temp
                 wa2 = L.U' \ wa2  # Solve U'*y = wa2
                 temp = norm(wa2)
@@ -213,9 +214,9 @@ function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float
             
             # Use the rank information from the Cholesky decomposition to update par.
             # For simplicity, we use a different approach in Julia
-            parc = -par * 0.1  # Simple update
+            parc = -par * T(0.1)  # Simple update
             pars = max(pars, par, par + parc)
-            paru = max(paru, (1.0 + rtol) * pars)
+            paru = max(paru, (const_one + rtol) * pars)
         end
         
         # Use pars to update parl.
@@ -226,7 +227,7 @@ function dgqt(n::Int, A_input::Matrix{Float64}, b::Vector{Float64}, delta::Float
             if iter == itmax
                 info = 4
             end
-            if paru <= (1.0 + const_p5 * rtol) * pars
+            if paru <= (const_one + const_p5 * rtol) * pars
                 info = 3
             end
             if paru == const_zero

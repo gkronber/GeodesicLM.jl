@@ -69,7 +69,7 @@ end
         r = geodesiclm(quadratic!, nothing, nothing; x=x, fvec=fvec, n=2, m=2, maxiter=100)
         @test cost(r[2]) < 1.0e-10
         @test r[1] ≈ [1.0, 2.0] atol=1.0e-5
-        @test r[7] in (3, 5, 6)  # gtol / xrtol / ftol convergence
+        @test r[7] in (2, 3, 4, 6)  # Cgoal / gtol / xtol / ftol convergence
         @test all(isfinite, r[2])
     end
 
@@ -79,7 +79,9 @@ end
         r = geodesiclm(rosenbrock!, rosenbrock_jac!, rosenbrock_avv!;
                        x=x, fvec=fvec, n=2, m=2,
                        analytic_jac=true, analytic_Avv=true, maxiter=500)
-        @test r[1] ≈ [1.0, 1.0] atol=1.0e-4
+        # the reference defaults stop at `Cgoal`, so on a zero-residual problem
+        # the minimizer is only accurate to about sqrt(Cgoal)
+        @test r[1] ≈ [1.0, 1.0] atol=1.0e-3
         @test cost(r[2]) < 1.0e-6
         @test r[5] > 0   # analytic Jacobian was actually used
         @test r[6] > 0   # analytic acceleration was actually used
@@ -90,7 +92,9 @@ end
         fvec = zeros(2)
         r = geodesiclm(rosenbrock!, nothing, nothing;
                        x=x, fvec=fvec, n=2, m=2, maxiter=500)
-        @test r[1] ≈ [1.0, 1.0] atol=1.0e-4
+        # the reference defaults stop at `Cgoal`, so on a zero-residual problem
+        # the minimizer is only accurate to about sqrt(Cgoal)
+        @test r[1] ≈ [1.0, 1.0] atol=1.0e-3
         @test cost(r[2]) < 1.0e-6
     end
 
@@ -99,7 +103,9 @@ end
         fvec = zeros(2)
         r = geodesiclm(rosenbrock!, nothing, nothing;
                        x=x, fvec=fvec, n=2, m=2, iaccel=0, maxiter=500)
-        @test r[1] ≈ [1.0, 1.0] atol=1.0e-4
+        # the reference defaults stop at `Cgoal`, so on a zero-residual problem
+        # the minimizer is only accurate to about sqrt(Cgoal)
+        @test r[1] ≈ [1.0, 1.0] atol=1.0e-3
         @test cost(r[2]) < 1.0e-6
         @test r[6] == 0  # no acceleration evaluations when iaccel=0
     end
@@ -123,7 +129,7 @@ end
             fvec = zeros(2)
             r = geodesiclm(rosenbrock!, nothing, nothing;
                            x=x, fvec=fvec, n=2, m=2, damp_mode=dm, maxiter=500)
-            @test r[1] ≈ [1.0, 1.0] atol=1.0e-4
+            @test r[1] ≈ [1.0, 1.0] atol=1.0e-3
             @test cost(r[2]) < 1.0e-6
         end
     end
@@ -136,7 +142,7 @@ end
                            x=x, fvec=fvec, n=2, m=2,
                            analytic_jac=true, analytic_Avv=true,
                            ibold=ib, maxiter=500)
-            @test r[1] ≈ [1.0, 1.0] atol=1.0e-4
+            @test r[1] ≈ [1.0, 1.0] atol=1.0e-3
             @test cost(r[2]) < 1.0e-6
         end
     end
@@ -200,11 +206,158 @@ end
         @test r[7] != -10
     end
 
+    @testset "Float32 (parametric element type)" begin
+        x = Float32[-1.2, 1.0]
+        fvec = zeros(Float32, 2)
+        r = geodesiclm(rosenbrock!, rosenbrock_jac!, nothing;
+                       x=x, fvec=fvec, n=2, m=2, analytic_jac=true, maxiter=500)
+        @test r[1] isa Vector{Float32}
+        @test r[2] isa Vector{Float32}
+        # `Cgoal` also scales with the precision, so Float32 stops earlier still
+        @test r[1] ≈ Float32[1.0, 1.0] atol=1.0f-2
+        @test cost(r[2]) < default_tolerance(Float32)
+
+        # finite differences too: the default step scales with the precision
+        x = Float32[-1.2, 1.0]
+        fvec = zeros(Float32, 2)
+        r = geodesiclm(rosenbrock!, nothing, nothing; x=x, fvec=fvec, n=2, m=2, maxiter=500)
+        @test r[1] ≈ Float32[1.0, 1.0] atol=1.0f-1
+        @test cost(r[2]) < default_tolerance(Float32)
+    end
+
+    @testset "tight convergence with Cgoal disabled" begin
+        # With the absolute cost goal switched off, a zero-residual problem is
+        # driven to machine precision (gtol convergence).
+        x = [-1.2, 1.0]
+        fvec = zeros(2)
+        r = geodesiclm(rosenbrock!, rosenbrock_jac!, nothing;
+                       x=x, fvec=fvec, n=2, m=2, analytic_jac=true,
+                       Cgoal=0.0, maxiter=500)
+        @test r[1] ≈ [1.0, 1.0] atol=1.0e-7
+        @test cost(r[2]) < 1.0e-15
+        @test r[7] == 3   # gtol
+    end
+
+    @testset "precision-dependent defaults" begin
+        # The reference interface hard-codes 1.49012e-8 == sqrt(eps(Float64))
+        # for the forward-difference step and for the absolute tolerances.
+        @test default_fd_step(Float64) ≈ 1.49012e-8 rtol=1e-5
+        @test default_fd_step(Float64) == sqrt(eps(Float64))
+        @test default_fd_step(Float64, true) == cbrt(eps(Float64))  # central diff
+        @test default_fd_step(Float32) isa Float32
+        @test default_fd_step(Float32) == sqrt(eps(Float32))
+        @test default_fd_step(Float32) > default_fd_step(Float64)
+
+        # h2 is a fraction of the proposed step, so it is precision-independent
+        @test default_avv_step(Float64) == 0.1
+        @test default_avv_step(Float32) === 0.1f0
+
+        @test default_tolerance(Float64) ≈ 1.49012e-8 rtol=1e-5
+        @test default_tolerance(Float32) == sqrt(eps(Float32))
+
+        @test default_initialfactor(0) == 0.001    # direct-lambda methods
+        @test default_initialfactor(1) == 0.001
+        @test default_initialfactor(10) == 100.0   # trust-region methods
+        @test default_initialfactor(11) == 100.0
+    end
+
+    @testset "keyword defaults match the reference interface" begin
+        # Guards against drift from `original/pythonInterface/geodesiclm.py`.
+        # `geodesiclm` is keyword-only, so the defaults are read off the method.
+        m = only(methods(geodesiclm))
+        kwnames = Base.kwarg_decl(m)
+        for k in (:center_diff, :damp_mode, :maxiter, :artol, :xrtol, :frtol,
+                  :imethod, :iaccel, :ibold, :ibroyden, :factoraccept,
+                  :factorreject, :avmax, :maxfev, :maxjev, :maxaev,
+                  :maxlam, :minlam)
+            @test k in kwnames
+        end
+        # Behavioural check of the defaults that are cheap to observe:
+        # `ibroyden = 0` means the Jacobian is recomputed every iteration.
+        x = [-1.2, 1.0]; fvec = zeros(2)
+        r = geodesiclm(rosenbrock!, rosenbrock_jac!, nothing;
+                       x=x, fvec=fvec, n=2, m=2, analytic_jac=true, maxiter=500)
+        @test r[5] == r[3]        # njev == niters (no Broyden updates)
+        # ... and `ibroyden = 1` reuses it
+        x = [-1.2, 1.0]; fvec = zeros(2)
+        r = geodesiclm(rosenbrock!, rosenbrock_jac!, nothing;
+                       x=x, fvec=fvec, n=2, m=2, analytic_jac=true,
+                       ibroyden=1, maxiter=500)
+        @test r[5] < r[3]
+        # `maxiter` defaults to 200*(n+1); count the iterations with every
+        # convergence criterion switched off (negative disables the ones that
+        # are compared against a non-negative quantity)
+        for np in (2, 3)
+            hits = Ref(0)
+            count_cb = (args...) -> (hits[] += 1; nothing)
+            f! = (p, f) -> (for i in eachindex(f); f[i] = p[i] - i; end; nothing)
+            x = zeros(np); fvec = zeros(np)
+            r = geodesiclm(f!, nothing, nothing; x=x, fvec=fvec, n=np, m=np,
+                           callback=count_cb, artol=0.0, Cgoal=0.0, gtol=-1.0,
+                           xtol=-1.0, ftol=-1.0)
+            @test hits[] == 200 * (np + 1)
+            @test r[3] == 200 * (np + 1)
+            @test r[7] == -1
+        end
+    end
+
+    @testset "workspace reuse" begin
+        # A reused workspace must give the same answer as a fresh one ...
+        x1 = [-1.2, 1.0]; f1 = zeros(2)
+        r1 = geodesiclm(rosenbrock!, rosenbrock_jac!, nothing;
+                        x=x1, fvec=f1, n=2, m=2, analytic_jac=true, maxiter=200)
+        ws = GeodesicLMWorkspace{Float64}(2, 2)
+        local r2
+        for _ in 1:3
+            x2 = [-1.2, 1.0]; f2 = zeros(2)
+            r2 = geodesiclm(rosenbrock!, rosenbrock_jac!, nothing;
+                            x=x2, fvec=f2, n=2, m=2, analytic_jac=true,
+                            workspace=ws, maxiter=200)
+        end
+        @test r2[1] == r1[1]
+        @test r2[2] == r1[2]
+        @test r2[7] == r1[7]
+
+        # ... and must not allocate per iteration once it has grown
+        run!(ws, x, fv) = geodesiclm(rosenbrock!, rosenbrock_jac!, nothing;
+                                     x=x, fvec=fv, n=2, m=2, analytic_jac=true,
+                                     workspace=ws, maxiter=200)
+        x3 = [-1.2, 1.0]; f3 = zeros(2)
+        run!(ws, x3, f3)
+        x3 .= [-1.2, 1.0]; f3 .= 0
+        short = @allocated run!(ws, x3, f3)
+        @test short < 1024
+
+        # a workspace grows to fit and is reusable across problem sizes
+        wsg = GeodesicLMWorkspace{Float64}()
+        for np in (2, 5, 3)
+            xx = zeros(np); ff = zeros(6)
+            g!(x, f) = (for i in eachindex(f); f[i] = x[min(i, length(x))] - i; end; nothing)
+            r = geodesiclm(g!, nothing, nothing; x=xx, fvec=ff, n=np, m=6,
+                           workspace=wsg, maxiter=50)
+            @test length(r[1]) == np
+            @test all(isfinite, r[1])
+        end
+        @test wsg.n >= 5
+    end
+
+    @testset "caller's dtd is not modified" begin
+        dtd = Matrix{Float64}(I, 2, 2) .* 3.0
+        dtd_copy = copy(dtd)
+        x = [-1.2, 1.0]; fvec = zeros(2)
+        geodesiclm(rosenbrock!, nothing, nothing;
+                   x=x, fvec=fvec, n=2, m=2, dtd=dtd, damp_mode=1, maxiter=100)
+        @test dtd == dtd_copy
+    end
+
     @testset "dpmpar machine parameters" begin
         @test dpmpar(1) ≈ eps(Float64)
         @test dpmpar(2) ≈ floatmin(Float64)
         @test dpmpar(3) ≈ floatmax(Float64)
         @test_throws ErrorException dpmpar(4)
+        @test dpmpar(Float32, 1) === eps(Float32)
+        @test dpmpar(Float32, 2) === floatmin(Float32)
+        @test dpmpar(Float32, 3) === floatmax(Float32)
     end
 
     @testset "fdjac finite-difference Jacobian" begin

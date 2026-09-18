@@ -6,6 +6,7 @@ module GeodesicLM
 using LinearAlgebra
 
 # Import all component functions
+include("workspace.jl")
 include("accept.jl")
 include("converge.jl")
 include("destsv.jl")
@@ -19,13 +20,20 @@ include("geodesiclm_alg.jl")
 
 # Export the main API
 export geodesiclm
+export GeodesicLMWorkspace
+export default_fd_step
+export default_avv_step
+export default_tolerance
+export default_initialfactor
 export acceptance
 export convergence_check
 export destsv
 export dgqt
 export dpmpar
 export fd_avv
+export fd_avv!
 export fdjac
+export fdjac!
 export trust_region
 export update_lam_factor
 export update_lam_nelson

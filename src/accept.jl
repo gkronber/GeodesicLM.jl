@@ -2,8 +2,7 @@
 # file accept.jl
 
 """
-    acceptance(n::Int, C::Float64, Cnew::Float64, Cbest::Float64, ibold::Int, 
-               dtd::Matrix{Float64}, v::Vector{Float64}, vold::Vector{Float64})
+    acceptance(n::Int, C, Cnew, Cbest, ibold::Int, dtd, v, vold, tmp = similar(v))
 
 Accept or reject a step based on the cost function value and the bold acceptance criterion.
 
@@ -16,28 +15,34 @@ Accept or reject a step based on the cost function value and the bold acceptance
 - `dtd`: damping matrix
 - `v`: current step
 - `vold`: previous step
+- `tmp`: length-`n` scratch vector (supply one to keep the call allocation-free)
 
 # Returns
 - `accepted`: acceptance status (>0 for accepted, <0 for rejected)
 """
-function acceptance(n::Int, C::Float64, Cnew::Float64, Cbest::Float64, ibold::Int, 
-                   dtd::Matrix{Float64}, v::Vector{Float64}, vold::Vector{Float64})
-    
+function acceptance(n::Int, C::T, Cnew::T, Cbest::T, ibold::Int,
+                    dtd::AbstractMatrix{T}, v::AbstractVector{T},
+                    vold::AbstractVector{T},
+                    tmp::AbstractVector{T} = similar(v)) where {T<:AbstractFloat}
+
     accepted = 0
-    
+
     if Cnew <= C
         # Accept all downhill steps
         accepted = max(accepted + 1, 1)
     else
         # Calculate beta
-        if dot(vold, vold) == 0.0
-            beta = 1.0
+        if dot(vold, vold) == zero(T)
+            beta = one(T)
         else
-            beta = dot(v, dtd * vold)
-            beta = beta / sqrt(dot(v, dtd * v) * dot(vold, dtd * vold))
-            beta = min(1.0, 1.0 - beta)
+            mul!(tmp, dtd, vold)
+            beta = dot(v, tmp)
+            vold_dtd_vold = dot(vold, tmp)
+            mul!(tmp, dtd, v)
+            beta = beta / sqrt(dot(v, tmp) * vold_dtd_vold)
+            beta = min(one(T), one(T) - beta)
         end
-        
+
         if ibold == 0
             # Only downhill steps
             if Cnew <= C
@@ -71,6 +76,6 @@ function acceptance(n::Int, C::Float64, Cnew::Float64, Cbest::Float64, ibold::In
             end
         end
     end
-    
+
     return accepted
 end

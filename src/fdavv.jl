@@ -3,14 +3,14 @@
 # Routine for calculating finite-difference second directional derivative
 
 """
-    fd_avv(m::Int, n::Int, x::Vector{Float64}, v::Vector{Float64}, 
-           fvec::Vector{Float64}, fjac::Matrix{Float64}, func::Function, 
-           jac_uptodate::Bool, h2::Float64)
+    fd_avv!(acc, m, n, x, v, fvec, fjac, func, jac_uptodate, h2,
+            x_work = similar(x), ftmp = similar(fvec))
 
-Calculate the finite-difference second directional derivative of the 
-objective functions in the direction v.
+Calculate the finite-difference second directional derivative of the
+objective functions in the direction v, writing the result into `acc`.
 
 # Arguments
+- `acc`: length-`m` output vector
 - `m`: number of functions
 - `n`: number of parameters
 - `x`: current point
@@ -20,33 +20,56 @@ objective functions in the direction v.
 - `func`: user-supplied function computing fvec (of form func(x, fvec))
 - `jac_uptodate`: whether the Jacobian is current
 - `h2`: finite-difference step size
+- `x_work`, `ftmp`: scratch arrays (supply them to keep the call allocation-free)
 
 # Returns
-- `acc`: estimated second directional derivative (m-vector)
+- `acc` (modified in place)
 """
-function fd_avv(m::Int, n::Int, x::Vector{Float64}, v::Vector{Float64}, 
-               fvec::Vector{Float64}, fjac::Matrix{Float64}, func::Function, 
-               jac_uptodate::Bool, h2::Float64)
-    
+function fd_avv!(acc::AbstractVector{T}, m::Int, n::Int, x::AbstractVector{T},
+                 v::AbstractVector{T}, fvec::AbstractVector{T}, fjac::AbstractMatrix{T},
+                 func::F, jac_uptodate::Bool, h2::T,
+                 x_work::AbstractVector{T} = similar(x),
+                 ftmp::AbstractVector{T} = similar(fvec)) where {T<:AbstractFloat,F}
+
     if jac_uptodate
         # If jacobian is up to date, use it to reduce function evaluations
-        xtmp = x + h2 * v
-        ftmp = similar(fvec)
-        func(xtmp, ftmp)
-        acc = (2.0 / h2) * ((ftmp - fvec) / h2 - fjac * v)
+        @inbounds for i in 1:n
+            x_work[i] = x[i] + h2 * v[i]
+        end
+        func(x_work, ftmp)
+        mul!(acc, fjac, v)                    # acc := J*v
+        @inbounds for k in 1:m
+            acc[k] = (2 / h2) * ((ftmp[k] - fvec[k]) / h2 - acc[k])
+        end
     else
         # If jacobian not up to date, do not use jacobian in finite difference
         # This requires one more function call
-        xtmp = x + h2 * v
-        ftmp = similar(fvec)
-        func(xtmp, ftmp)
-        
-        xtmp = x - h2 * v
-        acc_tmp = similar(fvec)
-        func(xtmp, acc_tmp)
-        
-        acc = (ftmp - 2 * fvec + acc_tmp) / (h2 * h2)
+        @inbounds for i in 1:n
+            x_work[i] = x[i] + h2 * v[i]
+        end
+        func(x_work, ftmp)
+
+        @inbounds for i in 1:n
+            x_work[i] = x[i] - h2 * v[i]
+        end
+        func(x_work, acc)                     # acc := f(x - h2*v)
+
+        @inbounds for k in 1:m
+            acc[k] = (ftmp[k] - 2 * fvec[k] + acc[k]) / (h2 * h2)
+        end
     end
-    
+
     return acc
+end
+
+"""
+    fd_avv(m, n, x, v, fvec, fjac, func, jac_uptodate, h2)
+
+Allocating wrapper around [`fd_avv!`](@ref); returns a freshly allocated
+length-`m` vector.
+"""
+function fd_avv(m::Int, n::Int, x::AbstractVector{T}, v::AbstractVector{T},
+                fvec::AbstractVector{T}, fjac::AbstractMatrix{T}, func::F,
+                jac_uptodate::Bool, h2::T) where {T<:AbstractFloat,F}
+    fd_avv!(zeros(T, m), m, n, x, v, fvec, fjac, func, jac_uptodate, h2)
 end
