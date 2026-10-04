@@ -84,8 +84,8 @@ function convergence_check(m::Int, n::Int, accepted::Int, counter::Int, C::T,
     end
 
     # If gradient is small
-    mul!(grad, transpose(fjac), fvec)
-    if sqrt(dot(grad, grad)) <= gtol
+    _gemv_t!(grad, fjac, fvec)
+    if sqrt(_dot(grad, grad)) <= gtol
         converged = 3
         return (converged, counter)
     end

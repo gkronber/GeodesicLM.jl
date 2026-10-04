@@ -37,7 +37,7 @@ function fd_avv!(acc::AbstractVector{T}, m::Int, n::Int, x::AbstractVector{T},
             x_work[i] = x[i] + h2 * v[i]
         end
         func(x_work, ftmp)
-        mul!(acc, fjac, v)                    # acc := J*v
+        _gemv!(acc, fjac, v)                  # acc := J*v
         @inbounds for k in 1:m
             acc[k] = (2 / h2) * ((ftmp[k] - fvec[k]) / h2 - acc[k])
         end

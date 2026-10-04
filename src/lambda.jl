@@ -39,9 +39,9 @@ function trust_region(n::Int, m::Int, fvec::AbstractVector{T}, fjac::AbstractMat
     end
 
     gradCtilde = similar(fvec, n)
-    mul!(gradCtilde, transpose(jtilde), fvec)
+    _gemv_t!(gradCtilde, jtilde, fvec)
     g = similar(fjac, n, n)
-    mul!(g, transpose(jtilde), jtilde)  # Compute J'*J
+    _syrk_t!(g, jtilde)  # Compute J'*J
 
     # Solve the trust region problem
     (v, lam, info, f) = dgqt(n, g, gradCtilde, delta, rtol, atol, itmax, lam)
@@ -137,11 +137,11 @@ function update_lam_umrigar(m::Int, n::Int, lam::T, accepted::Int, v::AbstractVe
     amemory = exp(-one(T) / 5)
 
     # Compute cosine
-    mul!(tmp, dtd, vold)
-    cos_on = dot(v, tmp)
-    vold_dtd_vold = dot(vold, tmp)
-    mul!(tmp, dtd, v)
-    cos_on = cos_on / sqrt(dot(v, tmp) * vold_dtd_vold)
+    _gemv!(tmp, dtd, vold)
+    cos_on = _dot(v, tmp)
+    vold_dtd_vold = _dot(vold, tmp)
+    _gemv!(tmp, dtd, v)
+    cos_on = cos_on / sqrt(_dot(v, tmp) * vold_dtd_vold)
     
     if accepted >= 0
         if Cnew <= C
@@ -231,8 +231,8 @@ function update_delta_more(delta::T, lam::T, n::Int, v::AbstractVector{T},
                           dirder::T, actred::T, av::T, avmax::T,
                           tmp::AbstractVector{T} = similar(v)) where {T<:AbstractFloat}
 
-    mul!(tmp, dtd, v)
-    pnorm = sqrt(dot(v, tmp))
+    _gemv!(tmp, dtd, v)
+    pnorm = sqrt(_dot(v, tmp))
 
     if rho > T(0.25)
         if lam > zero(T) && rho < T(0.75)

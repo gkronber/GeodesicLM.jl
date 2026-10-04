@@ -6,6 +6,7 @@ module GeodesicLM
 using LinearAlgebra
 
 # Import all component functions
+include("smallblas.jl")
 include("workspace.jl")
 include("accept.jl")
 include("converge.jl")

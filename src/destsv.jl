@@ -95,7 +95,7 @@ function destsv(n::Int, R::AbstractMatrix{T}) where {T<:AbstractFloat}
         z[i] = w
     end
     
-    ynorm = norm(z)
+    ynorm = _nrm2(z)
     
     # Solve R*z = y.
     for j in n:-1:1
@@ -119,7 +119,7 @@ function destsv(n::Int, R::AbstractMatrix{T}) where {T<:AbstractFloat}
     end
     
     # Compute svmin and normalize z.
-    znorm = one(T) / norm(z)
+    znorm = one(T) / _nrm2(z)
     svmin = ynorm * znorm
     z = z .* znorm
     

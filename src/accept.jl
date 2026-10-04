@@ -32,14 +32,14 @@ function acceptance(n::Int, C::T, Cnew::T, Cbest::T, ibold::Int,
         accepted = max(accepted + 1, 1)
     else
         # Calculate beta
-        if dot(vold, vold) == zero(T)
+        if _dot(vold, vold) == zero(T)
             beta = one(T)
         else
-            mul!(tmp, dtd, vold)
-            beta = dot(v, tmp)
-            vold_dtd_vold = dot(vold, tmp)
-            mul!(tmp, dtd, v)
-            beta = beta / sqrt(dot(v, tmp) * vold_dtd_vold)
+            _gemv!(tmp, dtd, vold)
+            beta = _dot(v, tmp)
+            vold_dtd_vold = _dot(vold, tmp)
+            _gemv!(tmp, dtd, v)
+            beta = beta / sqrt(_dot(v, tmp) * vold_dtd_vold)
             beta = min(one(T), one(T) - beta)
         end
 

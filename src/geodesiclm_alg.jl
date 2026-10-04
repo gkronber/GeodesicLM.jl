@@ -288,7 +288,7 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
     # Evaluate function at initial point
     func(xc, fv)
     nfev = nfev + 1
-    C = T(0.5) * dot(fv, fv)
+    C = T(0.5) * _dot(fv, fv)
 
     if print_level >= 1
         println(print_unit, "  Initial Cost:    ", C)
@@ -296,7 +296,7 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
     end
 
     # Check for NaNs in initial fvec
-    if any(isnan, fv)
+    if _hasnan(fv)
         converged = -11
         maxiter = 0
     end
@@ -320,10 +320,10 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
 
     jac_uptodate = true
     jac_force_update = false
-    mul!(jtj, transpose(fjac), fjac)
+    _syrk_t!(jtj, fjac)
 
     # Check fjac for NaNs
-    if any(isnan, fjac)
+    if _hasnan(fjac)
         converged = -11
         maxiter = 0
     end
@@ -361,8 +361,8 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
         lam = lam * initialfactor
     else
         # Initialize trust region radius
-        mul!(ntmp1, dtdm, xc)
-        delta = initialfactor * sqrt(dot(xc, ntmp1))
+        _gemv!(ntmp1, dtdm, xc)
+        delta = initialfactor * sqrt(_dot(xc, ntmp1))
         lam = one(T)
         if delta == zero(T)
             delta = T(100)
@@ -436,13 +436,13 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
         end
 
         # Check fjac for NaNs
-        if any(isnan, fjac)
+        if _hasnan(fjac)
             # If NaNs in Jacobian
             converged = -11
             break
         end
 
-        mul!(jtj, transpose(fjac), fjac)
+        _syrk_t!(jtj, fjac)
 
         # Update Scaling/lam/TrustRegion
         if istep > 1
@@ -484,28 +484,29 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
             g[i, j] = jtj[i, j] + lam * dtdm[i, j]
         end
 
-        # Cholesky decomposition
-        L = cholesky!(Hermitian(g, :U), check=false)
+        # Cholesky decomposition g = U'U in place (upper triangle of g);
+        # a matrix that is not numerically positive definite gives info != 0
+        chol_info = _potrf_upper!(g)
 
-        if issuccess(L)
+        if chol_info == 0
             # If matrix decomposition successful, solve the normal equations
             # (J'J + lam*dtd)*v = -J'*f
-            mul!(v, transpose(fjac), fv)
-            rmul!(v, -one(T))
-            ldiv!(L, v)
+            _gemv_t!(v, fjac, fv)
+            _scal!(v, -one(T))
+            _potrs_upper!(v, g)
 
             # Calculate the predicted reduction and directional derivative
-            mul!(ntmp2, jtj, v)
-            temp1 = T(0.5) * dot(v, ntmp2) / C
-            mul!(ntmp3, dtdm, v)
-            vdtdv = dot(v, ntmp3)
+            _gemv!(ntmp2, jtj, v)
+            temp1 = T(0.5) * _dot(v, ntmp2) / C
+            _gemv!(ntmp3, dtdm, v)
+            vdtdv = _dot(v, ntmp3)
             temp2 = T(0.5) * lam * vdtdv / C
             pred_red = temp1 + 2 * temp2
             dirder = -(temp1 + temp2)
 
             # Calculate cos_alpha -- cos of angle between step direction and residual
-            mul!(jv, fjac, v)
-            cos_alpha = abs(dot(fv, jv)) / (sqrt(dot(fv, fv)) * sqrt(dot(jv, jv)))
+            _gemv!(jv, fjac, v)
+            cos_alpha = abs(_dot(fv, jv)) / (sqrt(_dot(fv, fv)) * sqrt(_dot(jv, jv)))
 
             if imethod < 10
                 delta = sqrt(vdtdv)
@@ -526,18 +527,18 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
                 end
 
                 # Check acceleration for NaNs
-                if !any(isnan, acc)
-                    mul!(a, transpose(fjac), acc)
-                    rmul!(a, -one(T))
-                    ldiv!(L, a)
+                if !_hasnan(acc)
+                    _gemv_t!(a, fjac, acc)
+                    _scal!(a, -one(T))
+                    _potrs_upper!(a, g)
                 else
                     fill!(a, zero(T))  # If NaNs in acc, ignore acceleration term
                 end
             end
 
             # Evaluate at proposed step -- only necessary if av <= avmax
-            mul!(ntmp2, dtdm, a)
-            av = sqrt(dot(a, ntmp2) / vdtdv)
+            _gemv!(ntmp2, dtdm, a)
+            av = sqrt(_dot(a, ntmp2) / vdtdv)
 
             if av <= avmax
                 @inbounds for i in 1:n
@@ -545,10 +546,10 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
                 end
                 func(x_new, fvec_new)
                 nfev = nfev + 1
-                Cnew = T(0.5) * dot(fvec_new, fvec_new)
+                Cnew = T(0.5) * _dot(fvec_new, fvec_new)
 
                 # Check for NaNs in fvec_new
-                if !any(isnan, fvec_new)
+                if !_hasnan(fvec_new)
                     # If no NaNs, proceed as normal
                     actred = one(T) - Cnew / C
                     rho = zero(T)
@@ -629,9 +630,9 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
         println(print_unit, "Optimization finished")
         println(print_unit, "Results:")
         println(print_unit, "  Converged:    ", get(CONVERGED_INFO, converged, "Unknown"), " (", converged, ")")
-        println(print_unit, "  Final Cost:   ", T(0.5) * dot(fvec_best, fvec_best))
+        println(print_unit, "  Final Cost:   ", T(0.5) * _dot(fvec_best, fvec_best))
         if m > n
-            println(print_unit, "  Cost/DOF:     ", T(0.5) * dot(fvec_best, fvec_best) / (m - n))
+            println(print_unit, "  Cost/DOF:     ", T(0.5) * _dot(fvec_best, fvec_best) / (m - n))
         end
         println(print_unit, "  niters:       ", niters)
         println(print_unit, "  nfev:         ", nfev)

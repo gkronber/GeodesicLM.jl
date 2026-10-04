@@ -77,7 +77,7 @@ function dgqt(n::Int, A_input::AbstractMatrix{T}, b::AbstractVector{T}, delta::T
         wa2[j] = wa2[j] - abs(wa1[j])
     end
     
-    bnorm = norm(b)
+    bnorm = _nrm2(b)
     
     # Calculate a lower bound, pars, for the domain of the problem.
     # Also calculate an upper bound, paru, and a lower bound, parl, 
@@ -123,16 +123,11 @@ function dgqt(n::Int, A_input::AbstractMatrix{T}, b::AbstractVector{T}, delta::T
         end
         
         # Attempt the Cholesky factorization of A without referencing
-        # the lower triangular part.
-        # (hoist these because `try` introduces a new scope)
-        indef = 1
-        L = nothing
-        try
-            L = cholesky(Hermitian(A, :U))
-            indef = 0
-        catch
-            indef = 1
-        end
+        # the lower triangular part
+        # (on a copy: the lower triangle of A is used to rebuild the upper one
+        # in the next iteration)
+        U = copy(A)
+        indef = _potrf_upper!(U) == 0 ? 0 : 1
         
         # Case 1: A + par*I is positive definite.
         if indef == 0
@@ -140,12 +135,11 @@ function dgqt(n::Int, A_input::AbstractMatrix{T}, b::AbstractVector{T}, delta::T
             # Compute an approximate solution x and save the
             # last value of par with A + par*I positive definite.
             parf = par
-            wa2 = copy(b)
-            wa2 = L.U' \ wa2  # Solve U'*y = b
-            rxnorm = norm(wa2)
-            x = L.U \ wa2     # Solve U*x = y
+            wa2 = _trsv_ut!(copy(b), U)   # Solve U'*y = b
+            rxnorm = _nrm2(wa2)
+            x = _trsv_u!(copy(wa2), U)    # Solve U*x = y
             x = -x
-            xnorm = norm(x)
+            xnorm = _nrm2(x)
             
             # Test for convergence.
             if abs(xnorm - delta) <= rtol * delta || 
@@ -155,7 +149,7 @@ function dgqt(n::Int, A_input::AbstractMatrix{T}, b::AbstractVector{T}, delta::T
             
             # Compute a direction of negative curvature and use this
             # information to improve pars.
-            (rznorm, z) = destsv(n, L.U)
+            (rznorm, z) = destsv(n, UpperTriangular(U))
             pars = max(pars, par - rznorm^2)
             
             # Compute a negative curvature solution of the form
@@ -164,7 +158,7 @@ function dgqt(n::Int, A_input::AbstractMatrix{T}, b::AbstractVector{T}, delta::T
             if xnorm < delta
                 
                 # Compute alpha
-                prod = dot(z, x) / delta
+                prod = _dot(z, x) / delta
                 temp = (delta - xnorm) * ((delta + xnorm) / delta)
                 alpha = temp / (abs(prod) + sqrt(prod^2 + temp / delta))
                 alpha = sign(alpha) * abs(alpha)
@@ -197,8 +191,8 @@ function dgqt(n::Int, A_input::AbstractMatrix{T}, b::AbstractVector{T}, delta::T
                 wa2 = copy(x)
                 temp = const_one / xnorm
                 wa2 = wa2 .* temp
-                wa2 = L.U' \ wa2  # Solve U'*y = wa2
-                temp = norm(wa2)
+                _trsv_ut!(wa2, U)  # Solve U'*y = wa2
+                temp = _nrm2(wa2)
                 parc = (((xnorm - delta) / delta) / temp) / temp
             end
             

@@ -475,4 +475,81 @@ end
         @test cost(r[2]) < 1.0e-6
     end
 
+    @testset "pure-Julia linear algebra kernels" begin
+        # bounded entries, so that also Float32 products stay finite
+        vals(T, m, n) = T[sin(3.0 * i + 7.0 * j) * exp(-0.2 * j) * (1 + i / m) for i in 1:m, j in 1:n]
+        for T in (Float64, Float32), (m, n) in ((1, 1), (5, 3), (37, 4), (500, 7))
+            A = vals(T, m, n)
+            x = T[cos(1.3 * k) for k in 1:n]
+            f = T[sin(0.7 * k) for k in 1:m]
+            @test GeodesicLM._gemv!(zeros(T, m), A, x) ≈ A * x
+            @test GeodesicLM._gemv_t!(zeros(T, n), A, f) ≈ A' * f
+            C = GeodesicLM._syrk_t!(zeros(T, n, n), A)
+            @test C ≈ A' * A
+            @test issymmetric(C)
+            @test GeodesicLM._dot(f, f) ≈ dot(f, f)
+            @test GeodesicLM._nrm2(f) ≈ norm(f)
+            @test GeodesicLM._axpy!(T(0.5), f, copy(f)) ≈ T(1.5) .* f
+            @test GeodesicLM._scal!(copy(A), -T(2)) == -T(2) .* A
+            # views, as the workspace hands out
+            Aw = view(vals(T, m + 3, n + 2), 1:m, 1:n)
+            @test GeodesicLM._gemv!(view(zeros(T, m + 1), 1:m), Aw, x) ≈ Aw * x
+            @test GeodesicLM._syrk_t!(view(zeros(T, n + 1, n + 1), 1:n, 1:n), Aw) ≈ Aw' * Aw
+        end
+
+        # norm with over- and underflowing sums of squares, zeros, Inf and NaN
+        for v in ([1.0e200, -3.0e200], [1.0e-200, 2.0e-200], Float32[1.0f30, -3.0f30],
+                  Float32[1.0f-30, 2.0f-30])
+            @test GeodesicLM._nrm2(v) ≈ norm(v)
+        end
+        for v in (zeros(3), Float64[], [1.0, Inf], [1.0, NaN])
+            @test isequal(GeodesicLM._nrm2(v), norm(v))
+        end
+
+        # Cholesky and solves on the upper triangle; the lower triangle is untouched
+        B = vals(Float64, 9, 4)
+        S = B' * B + 0.1 * I
+        F = copy(S)
+        F[2, 1] = F[3, 1] = 42.0
+        @test GeodesicLM._potrf_upper!(F) == 0
+        @test UpperTriangular(F) ≈ cholesky(Symmetric(S)).U
+        @test F[2, 1] == 42.0 && F[3, 1] == 42.0
+        b = [1.0, -2.0, 0.5, 3.0]
+        @test GeodesicLM._potrs_upper!(copy(b), F) ≈ S \ b
+        @test GeodesicLM._trsv_ut!(copy(b), F) ≈ UpperTriangular(F)' \ b
+        @test GeodesicLM._trsv_u!(copy(b), F) ≈ UpperTriangular(F) \ b
+
+        # a failed factorization reports the first non-positive or NaN pivot
+        # (like LAPACK potrf) instead of throwing
+        @test GeodesicLM._potrf_upper!([1.0 2.0; 2.0 1.0]) == 2
+        @test GeodesicLM._potrf_upper!([0.0 0.0; 0.0 1.0]) == 1
+        @test GeodesicLM._potrf_upper!([1.0 0.0; 0.0 NaN]) == 2
+
+        # NaN scan
+        @test !GeodesicLM._hasnan(zeros(3, 2)) && GeodesicLM._hasnan([0.0, NaN, 1.0])
+        @test !GeodesicLM._hasnan(Float32[Inf, -Inf]) && !GeodesicLM._hasnan(Float64[])
+    end
+
+    @testset "rank-deficient Jacobian" begin
+        # The residuals depend on x[1] + x[2] only, so J'J is singular and the
+        # undamped normal equations cannot be factored.
+        function sum_residual!(x, fvec)
+            for i in eachindex(fvec)
+                fvec[i] = (x[1] + x[2]) * i - 3.0 * i
+            end
+        end
+        function sum_jacobian!(x, fjac)
+            for i in axes(fjac, 1)
+                fjac[i, 1] = i
+                fjac[i, 2] = i
+            end
+        end
+        x = [0.0, 0.0]
+        fvec = zeros(5)
+        r = geodesiclm(sum_residual!, sum_jacobian!, nothing; x=x, fvec=fvec, n=2, m=5,
+                       analytic_jac=true, iaccel=0, maxiter=200)
+        @test cost(r[2]) < 1.0e-8
+        @test r[1][1] + r[1][2] ≈ 3.0 atol=1.0e-4
+    end
+
 end

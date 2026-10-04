@@ -37,11 +37,11 @@ function update_jac!(m::Int, n::Int, fjac::AbstractMatrix{T}, fvec::AbstractVect
     # direction reduces to `djac = 2*(r1 - fvec - 0.5*(J*v))/(v'v)` = the
     # acceleration contribution alone -- but it is kept in this form so the
     # result matches the Fortran original bit for bit.
-    mul!(djac, fjac, v)                       # djac := J*v (reused as scratch)
+    _gemv!(djac, fjac, v)                     # djac := J*v (reused as scratch)
     @inbounds for i in 1:m
         r1[i] = fvec[i] + T(0.5) * djac[i] + T(0.125) * acc[i]
     end
-    vtv = dot(v, v)
+    vtv = _dot(v, v)
     @inbounds for i in 1:m
         djac[i] = 2 * (r1[i] - fvec[i] - T(0.5) * djac[i]) / vtv
     end
@@ -57,8 +57,8 @@ function update_jac!(m::Int, n::Int, fjac::AbstractMatrix{T}, fvec::AbstractVect
     @inbounds for j in 1:n
         v2[j] = T(0.5) * (v[j] + a[j])
     end
-    mul!(djac, fjac, v2)                      # djac := J*v2
-    v2tv2 = dot(v2, v2)
+    _gemv!(djac, fjac, v2)                    # djac := J*v2
+    v2tv2 = _dot(v2, v2)
     @inbounds for i in 1:m
         djac[i] = T(0.5) * (fvec_new[i] - r1[i] - djac[i]) / v2tv2
     end
