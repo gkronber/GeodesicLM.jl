@@ -45,6 +45,20 @@ function cost(fvec)
     return 0.5 * dot(fvec, fvec)
 end
 
+# y = p1 exp(p2 t) + p3 at t = 1..30 with a small perturbation (nonzero residual)
+const EXPFIT_T = collect(1.0:30.0)
+const EXPFIT_Y = 2.0 .* exp.(0.1 .* EXPFIT_T) .+ 1.0 .+ 0.05 .* sin.(EXPFIT_T)
+function expfit!(x, fvec)
+    @. fvec = x[1] * exp(x[2] * EXPFIT_T) + x[3] - EXPFIT_Y
+    return nothing
+end
+function expfit_jac!(x, fjac)
+    @. fjac[:, 1] = exp(x[2] * EXPFIT_T)
+    @. fjac[:, 2] = x[1] * EXPFIT_T * exp(x[2] * EXPFIT_T)
+    fjac[:, 3] .= 1.0
+    return nothing
+end
+
 @testset "GeodesicLM.jl" begin
 
     @testset "Return value structure" begin
@@ -528,6 +542,35 @@ end
         # NaN scan
         @test !GeodesicLM._hasnan(zeros(3, 2)) && GeodesicLM._hasnan([0.0, NaN, 1.0])
         @test !GeodesicLM._hasnan(Float32[Inf, -Inf]) && !GeodesicLM._hasnan(Float64[])
+    end
+
+    @testset "incremental J'J with Broyden updates" begin
+        # update_jac! with jtj changes fjac exactly as without, and jtj follows it
+        m, n = 40, 5
+        A = randn(m, n); fv = randn(m); fvn = randn(m); acc = randn(m)
+        v = randn(n); a = 0.1 .* randn(n)
+        J1 = copy(A); J2 = copy(A)
+        jtj = A' * A
+        update_jac!(m, n, J1, fv, fvn, acc, v, a)
+        update_jac!(m, n, J2, fv, fvn, acc, v, a, similar(fv), similar(fv), similar(v), jtj, zeros(n))
+        @test J2 == J1
+        @test jtj ≈ J1' * J1 rtol = 1e-12
+        @test jtj == jtj'
+
+        # geodesiclm reaches the same optimum, also on a problem with m > n that
+        # takes many Broyden steps
+        for (f!, j!, x0, m) in ((rosenbrock!, rosenbrock_jac!, [-1.2, 1.0], 2),
+                                (expfit!, expfit_jac!, [1.0, 0.1, 0.0], 30))
+            xs = Vector{Float64}[]
+            for inc in (false, true)
+                x = copy(x0); fvec = zeros(m)
+                r = geodesiclm(f!, j!, nothing; x, fvec, n = length(x0), m, analytic_jac = true,
+                               iaccel = 0, ibroyden = 1, maxiter = 500, incremental_jtj = inc)
+                @test r[7] > 0
+                push!(xs, r[1])
+            end
+            @test xs[2] ≈ xs[1] rtol = 1e-6
+        end
     end
 
     @testset "rank-deficient Jacobian" begin

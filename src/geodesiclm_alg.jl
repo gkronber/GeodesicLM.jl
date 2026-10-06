@@ -101,7 +101,7 @@ const CONVERGED_INFO = Dict{Int,String}(
                print_level::Int=0, print_unit::IO=stdout,
                imethod::Int=0, iaccel::Int=1, ibold::Int=2, ibroyden::Int=0,
                initialfactor::Union{Nothing,Real}=nothing, factoraccept::Real=3.0,
-               factorreject::Real=2.0, avmax::Real=0.75)
+               factorreject::Real=2.0, avmax::Real=0.75, incremental_jtj::Bool=false)
 
 Minimize the sum of squares of m nonlinear functions of n variables using the
 Geodesic-Levenberg-Marquardt algorithm with geodesic acceleration, bold acceptance
@@ -177,6 +177,10 @@ exactly in `Float64` and stays meaningful in lower precision.
  - `factoraccept`: Factor for lambda/delta on acceptance
  - `factorreject`: Factor for lambda/delta on rejection
  - `avmax`: Maximum allowed acceleration norm
+ - `incremental_jtj`: Update `J'J` with each Broyden update in O(m n) instead of
+   forming it anew in O(m n²); it is formed anew after every evaluated
+   Jacobian.  Changes the results by rounding.  `J'J` is formed only when the
+   Jacobian has changed, also without this option.
 """
 function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Union{Function,Nothing};
                     x::AbstractVector{T}, fvec::AbstractVector{T}, n::Int, m::Int,
@@ -196,7 +200,8 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
                     print_level::Int=0, print_unit::IO=stdout,
                     imethod::Int=0, iaccel::Int=1, ibold::Int=2, ibroyden::Int=0,
                     initialfactor::Union{Nothing,Real}=nothing, factoraccept::Real=3.0,
-                    factorreject::Real=2.0, avmax::Real=0.75) where {T<:AbstractFloat}
+                    factorreject::Real=2.0, avmax::Real=0.75,
+                    incremental_jtj::Bool=false) where {T<:AbstractFloat}
 
     # Scalar options at the working precision.  The finite-difference steps and
     # the absolute tolerances default to precision-dependent values that
@@ -321,6 +326,10 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
     jac_uptodate = true
     jac_force_update = false
     _syrk_t!(jtj, fjac)
+    # Has fjac changed since the last NaN check, and since jtj was formed?
+    # A rejected step leaves both as they are.
+    fjac_changed = false
+    jtj_stale = false
 
     # Check fjac for NaNs
     if _hasnan(fjac)
@@ -401,7 +410,14 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
 
         if accepted > 0 && ibroyden > 0 && !jac_force_update
             # Rank deficient update of Jacobian matrix
-            update_jac!(m, n, fjac, fv, fvec_new, acc, v, a, mtmp1, mtmp2, ntmp1)
+            if incremental_jtj
+                # ntmp2 is free here: it is written before its next use
+                update_jac!(m, n, fjac, fv, fvec_new, acc, v, a, mtmp1, mtmp2, ntmp1, jtj, ntmp2)
+            else
+                update_jac!(m, n, fjac, fv, fvec_new, acc, v, a, mtmp1, mtmp2, ntmp1)
+                jtj_stale = true
+            end
+            fjac_changed = true
             jac_uptodate = false
         end
 
@@ -433,16 +449,24 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
             end
             jac_uptodate = true
             jac_force_update = false
+            fjac_changed = true
+            jtj_stale = true
         end
 
-        # Check fjac for NaNs
-        if _hasnan(fjac)
-            # If NaNs in Jacobian
-            converged = -11
-            break
+        if fjac_changed
+            # Check fjac for NaNs
+            if _hasnan(fjac)
+                # If NaNs in Jacobian
+                converged = -11
+                break
+            end
+            fjac_changed = false
         end
 
-        _syrk_t!(jtj, fjac)
+        if jtj_stale
+            _syrk_t!(jtj, fjac)
+            jtj_stale = false
+        end
 
         # Update Scaling/lam/TrustRegion
         if istep > 1
