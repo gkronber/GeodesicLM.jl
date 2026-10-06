@@ -6,12 +6,13 @@
     convergence_check(m, n, accepted, counter, C, Cnew, x, fvec, fjac, lam, xnew,
                       nfev, maxfev, njev, maxjev, naev, maxaev, maxlam, minlam,
                       artol, Cgoal, gtol, xtol, xrtol, ftol, frtol, cos_alpha,
-                      grad = similar(x))
+                      grad = similar(x); gradnorm = nothing)
 
 Check for convergence of the Levenberg-Marquardt algorithm.
 
 `grad` is a length-`n` scratch vector; supply one to keep the call
-allocation-free.
+allocation-free.  `gradnorm`, if given, is the norm of the gradient `fjac'fvec`
+for the gtol criterion, which is then not computed again.
 
 # Returns
 - `(converged, counter)`: tuple with convergence status and counter value
@@ -23,7 +24,8 @@ function convergence_check(m::Int, n::Int, accepted::Int, counter::Int, C::T,
                            maxaev::Int, maxlam::T, minlam::T, artol::T,
                            Cgoal::T, gtol::T, xtol::T, xrtol::T,
                            ftol::T, frtol::T, cos_alpha::T,
-                           grad::AbstractVector{T} = similar(x)) where {T<:AbstractFloat}
+                           grad::AbstractVector{T} = similar(x);
+                           gradnorm::Union{Nothing,T} = nothing) where {T<:AbstractFloat}
 
     converged = 0
 
@@ -84,8 +86,11 @@ function convergence_check(m::Int, n::Int, accepted::Int, counter::Int, C::T,
     end
 
     # If gradient is small
-    _gemv_t!(grad, fjac, fvec)
-    if sqrt(_dot(grad, grad)) <= gtol
+    if gradnorm === nothing
+        _gemv_t!(grad, fjac, fvec)
+        gradnorm = sqrt(_dot(grad, grad))
+    end
+    if gradnorm <= gtol
         converged = 3
         return (converged, counter)
     end

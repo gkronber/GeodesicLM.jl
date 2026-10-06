@@ -512,10 +512,15 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
         # a matrix that is not numerically positive definite gives info != 0
         chol_info = _potrf_upper!(g)
 
+        # The norm of the gradient J'f for the convergence check.  fv and fjac
+        # do not change before the check in this iteration, so the right-hand
+        # side of the normal equations serves; computed there if not solved.
+        gradnorm = nothing
         if chol_info == 0
             # If matrix decomposition successful, solve the normal equations
             # (J'J + lam*dtd)*v = -J'*f
             _gemv_t!(v, fjac, fv)
+            gradnorm = sqrt(_dot(v, v))
             _scal!(v, -one(T))
             _potrs_upper!(v, g)
 
@@ -604,7 +609,7 @@ function geodesiclm(func::Function, jacobian::Union{Function,Nothing}, Avv::Unio
                                                      fjac, lam, x_new, nfev, maxfev, njev, maxjev,
                                                      naev, maxaev, maxlam, minlam, artol, Cgoal,
                                                      gtol, xtol, xrtol, ftol, frtol, cos_alpha,
-                                                     ntmp1)
+                                                     ntmp1; gradnorm)
 
             if converged == 1 && !jac_uptodate
                 # If converged by artol with out-of-date Jacobian, update to confirm

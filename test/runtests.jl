@@ -573,6 +573,24 @@ end
         end
     end
 
+    @testset "gradient norm passed to convergence_check" begin
+        m, n = 3, 2
+        # fjac = 0: zero gradient unless a norm is passed
+        check(gtol; kw...) = first(convergence_check(m, n, -1, 0, 1.0, 1.0, zeros(n), ones(m), zeros(m, n),
+                                                     1.0, zeros(n), 1, 0, 1, 0, 0, 0, -1.0, -1.0, 0.0,
+                                                     0.0, gtol, 0.0, -1.0, 0.0, -1.0, 1.0, zeros(n); kw...))
+        @test check(0.0) == 3
+        @test check(0.0; gradnorm = 1.0) == 0
+        @test check(1e-8; gradnorm = 1e-9) == 3
+
+        # an exact fit stops by gtol = 0 (zero gradient), as before
+        x = [0.0, 0.0]; fvec = zeros(2)
+        r = geodesiclm(quadratic!, nothing, nothing; x, fvec, n = 2, m = 2, iaccel = 0,
+                       Cgoal = 0.0, gtol = 0.0, xtol = 0.0, ftol = 0.0, maxiter = 100)
+        @test r[7] == 3
+        @test r[1] ≈ [1.0, 2.0]
+    end
+
     @testset "rank-deficient Jacobian" begin
         # The residuals depend on x[1] + x[2] only, so J'J is singular and the
         # undamped normal equations cannot be factored.
