@@ -126,7 +126,7 @@ exactly in `Float64` and stays meaningful in lower precision.
  so challenging? Phys. Rev. Lett. 104, 060201 (2010)
 
  Transtrum M.K., Machta B.B., and Sethna J.P., The geometry of nonlinear least
- squares with applications to sloppy model and optimization. Phys. Rev. E. 80, 036701 (2011)
+ squares with applications to sloppy model and optimization. Phys. Rev. E 83, 036701 (2011)
  # Arguments
  - `func`: User-supplied function computing residuals: func(x, fvec) modifies fvec in place
  - `jacobian`: User-supplied Jacobian function: jacobian(x, fjac) or nothing

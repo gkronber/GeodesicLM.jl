@@ -65,7 +65,7 @@ println("Convergence code: ", converged)
   so challenging?" Phys. Rev. Lett. 104, 060201 (2010)
 - Transtrum M.K., Machta B.B., and Sethna J.P., "The geometry of nonlinear 
   least squares with applications to sloppy models and optimization," 
-  Phys. Rev. E 80, 036701 (2011)
+  Phys. Rev. E 83, 036701 (2011)
 """
 GeodesicLM
 

@@ -65,6 +65,10 @@ Other useful flags:
 See the [AirspeedVelocity README](https://github.com/MilesCranmer/AirspeedVelocity.jl)
 for the full CLI reference and CI integration options.
 
+In CI, the workflow `.github/workflows/Benchmark.yml` runs the same comparison for
+every pull request that changes `src/`, `benchmark/` or `Project.toml`, and shows
+the tables in the job summary.
+
 ### Without AirspeedVelocity: local revision comparison
 
 If you do not have `benchpkg` installed, `compare_revisions.jl` provides the same
