@@ -1,5 +1,8 @@
 # GeodesicLM.jl
 
+[![CI](https://github.com/gkronber/GeodesicLM.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/gkronber/GeodesicLM.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/gkronber/GeodesicLM.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/gkronber/GeodesicLM.jl)
+
 A Julia implementation of the geodesic Levenberg-Marquardt algorithm for
 nonlinear least squares, converted from the Fortran package
 [geodesicLM](https://sourceforge.net/projects/geodesiclm/) by Mark K. Transtrum.
