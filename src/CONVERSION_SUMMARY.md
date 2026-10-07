@@ -115,9 +115,9 @@ include("lambda.jl")
 include("updatejac.jl")
 include("geodesiclm_alg.jl")
 
-export geodesiclm, acceptance, convergence_check, destsv, dgqt, dpmpar,
-       fd_avv, fdjac, trust_region, update_lam_factor, update_lam_nelson,
-       update_lam_umrigar, update_delta_factor, update_delta_more, update_jac!
+export geodesiclm, GeodesicLMWorkspace
+
+public default_fd_step, default_avv_step, default_tolerance, default_initialfactor
 
 end  # module GeodesicLM
 ```

@@ -20,28 +20,9 @@ include("updatejac.jl")
 include("geodesiclm_alg.jl")
 
 # Export the main API
-export geodesiclm
-export GeodesicLMWorkspace
-export default_fd_step
-export default_avv_step
-export default_tolerance
-export default_initialfactor
-export acceptance
-export convergence_check
-export destsv
-export dgqt
-export dpmpar
-export fd_avv
-export fd_avv!
-export fdjac
-export fdjac!
-export trust_region
-export update_lam_factor
-export update_lam_nelson
-export update_lam_umrigar
-export update_delta_factor
-export update_delta_more
-export update_jac!
+export geodesiclm, GeodesicLMWorkspace
+
+public default_fd_step, default_avv_step, default_tolerance, default_initialfactor
 
 """
     GeodesicLM

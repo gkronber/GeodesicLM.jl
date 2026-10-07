@@ -1,4 +1,7 @@
 using GeodesicLM
+using GeodesicLM: default_fd_step, default_avv_step, default_tolerance, default_initialfactor,
+    acceptance, convergence_check, destsv, dgqt, dpmpar, fd_avv, fdjac, trust_region,
+    update_lam_factor, update_lam_nelson, update_delta_factor, update_jac!
 using Test
 using LinearAlgebra
 
@@ -613,4 +616,8 @@ end
         @test r[1][1] + r[1][2] ≈ 3.0 atol=1.0e-4
     end
 
+end
+
+@testset "every public name has a docstring" begin
+    @test isempty(Docs.undocumented_names(GeodesicLM))
 end

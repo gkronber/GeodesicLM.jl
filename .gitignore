@@ -1,3 +1,7 @@
 /Manifest*.toml
 benchmark/Manifest.toml
 benchmark/results*.json
+
+# AirspeedVelocity output when benchpkg runs from the repository root
+/results_*.json
+/results_*.json.tmp
