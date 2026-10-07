@@ -1,7 +1,7 @@
 name = "GeodesicLM"
 uuid = "ef14dfaf-8eb7-4021-bbb1-710ada96a62d"
 authors = ["Gabriel Kronberger"]
-version = "1.0.0-DEV"
+version = "0.1.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
