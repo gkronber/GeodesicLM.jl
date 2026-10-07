@@ -1,0 +1,23 @@
+name: Benchmark
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'benchmark/**'
+      - 'Project.toml'
+      - '.github/workflows/Benchmark.yml'
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Compares the pull request with its base branch; results go to the job summary.
+      # Timings on shared runners are noisy; the memory table is the reliable part.
+      - uses: MilesCranmer/AirspeedVelocity.jl@action-v1
+        with:
+          julia-version: '1'
+          job-summary: 'true'
